@@ -48,6 +48,10 @@ button {
   border: 1px solid var(--muted); background: var(--panel); color: var(--fg);
 }
 button:disabled { opacity: 0.5; cursor: default; }
+button.inline { padding: 4px 10px; margin-left: 8px; font-size: 0.9rem; }
+::placeholder { color: var(--muted); opacity: 0.6; font-style: italic; }
+details { margin: 16px 0; }
+summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
 button.primary { background: var(--rec); border-color: var(--rec); color: #fff; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; align-items: center; }
 .actions.big { flex-direction: column; align-items: stretch; }
@@ -58,7 +62,7 @@ button.primary { background: var(--rec); border-color: var(--rec); color: #fff; 
 .notice { background: var(--panel); padding: 10px 12px; border-radius: 8px; }
 .error { color: var(--err); }
 .ok { color: var(--ok); }
-.checks { padding-left: 0; list-style: none; }
+.checks { padding-left: 0; list-style: none; display: grid; gap: 6px; }
 .list { list-style: none; padding: 0; }
 .list li { border-bottom: 1px solid var(--panel); padding: 10px 0; }
 .list a { color: var(--fg); text-decoration: none; display: block; }
