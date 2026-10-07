@@ -3,6 +3,7 @@ import { Icon } from '../components/Icon';
 import { kickRunner } from '../jobs/runner';
 import { testConnections, type CheckResult } from '../settings/connectionTest';
 import { DEFAULT_SETTINGS, saveSettings, useSettings, type Settings } from '../settings/settingsStore';
+import { userFolder } from '../vault/paths';
 
 const PEOPLE = ['Yunus', 'Calvin'];
 const CHECKED_KEYS = new Set<keyof Settings>(['geminiKey', 'engine', 'flashModel', 'transcribeModel', 'fallbackModel', 'githubToken', 'vaultRepo', 'vaultBranch']);
@@ -141,7 +142,11 @@ export function SettingsPage() {
           </button>
         </div>
         {otherName && text('userName', 'Name', { placeholder: 'Dein Name' })}
-        <small>Steht in jeder Notiz, damit ihr seht, wer aufgenommen hat.</small>
+        <small>
+          {userFolder(settings.userName)
+            ? `Deine Notizen landen in Obsidian im eigenen Ordner „Transkripte/${userFolder(settings.userName)}“.`
+            : 'Wähle deinen Namen, dann bekommst du in Obsidian einen eigenen Ordner. Ohne Namen landet alles in „Transkripte“.'}
+        </small>
       </section>
 
       <section className="card stack" aria-labelledby="vault-title">
@@ -153,7 +158,10 @@ export function SettingsPage() {
           placeholder: 'z. B. Notizen',
           hint: 'Genau so, wie der Vault in Obsidian heißt. Kannst du auch beim ersten Speichern eintragen.',
         })}
-        <small>Notizen landen im Ordner „Transkripte/Jahr“. Obsidian muss auf diesem Gerät installiert sein.</small>
+        <small>
+          Notizen landen im Ordner „Transkripte/{userFolder(settings.userName) || 'Name'}/Jahr“. Obsidian muss auf diesem Gerät installiert
+          sein.
+        </small>
       </section>
 
       <details className="card">

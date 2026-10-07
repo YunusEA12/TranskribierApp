@@ -71,9 +71,9 @@ export async function discardJob(id: string): Promise<void> {
 }
 
 /** A vault path no other transcript on this device uses ("… (2).md" on collisions). */
-async function uniquePath(jobId: string, meta: Pick<TranscriptMeta, 'date' | 'time' | 'title'>): Promise<string> {
+async function uniquePath(jobId: string, meta: Pick<TranscriptMeta, 'date' | 'time' | 'title'>, user: string): Promise<string> {
   for (let n = 1; ; n++) {
-    const path = transcriptPath('', meta.date, meta.time, meta.title, n);
+    const path = transcriptPath(meta.date, meta.time, meta.title, { user, suffix: n });
     const taken = await db.transcripts.where('path').equals(path).filter((t) => t.id !== jobId).count();
     if (!taken) return path;
   }
@@ -158,7 +158,7 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       const { meta } = transcript;
       const markdown = toMarkdown(transcript);
       // The path stays fixed across retries, so handing it to Obsidian again overwrites instead of duplicating.
-      const path = job.vaultPath ?? (await uniquePath(job.id, meta));
+      const path = job.vaultPath ?? (await uniquePath(job.id, meta, settings.userName));
       const existing = await db.transcripts.get(job.id);
       await db.transaction('rw', [db.jobs, db.transcripts], async () => {
         await db.transcripts.put({

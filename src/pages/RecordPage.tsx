@@ -7,6 +7,7 @@ import { importAudioFile } from '../recording/importAudio';
 import { interruptedSessions, Recorder, recoverSession, type RecorderState } from '../recording/recorder';
 import { hrefFor, navigate } from '../router';
 import { missingSettings, useSettings } from '../settings/settingsStore';
+import { userFolder } from '../vault/paths';
 
 const recorder = new Recorder(); // module-level: survives page switches during a recording
 const BARS = 40;
@@ -107,6 +108,13 @@ export function RecordPage() {
           <Icon name="key" />
           <span>Noch kein API-Key eingetragen. Aufnehmen geht trotzdem, transkribiert wird danach.</span>
           <span className="go">Eintragen</span>
+        </a>
+      )}
+      {missingSettings(settings).length === 0 && !userFolder(settings.userName) && (
+        <a className="banner" href={hrefFor.settings}>
+          <Icon name="person" />
+          <span>Wähle deinen Namen, damit deine Notizen in Obsidian in deinem eigenen Ordner landen.</span>
+          <span className="go">Wählen</span>
         </a>
       )}
 
