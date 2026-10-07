@@ -296,13 +296,15 @@ Eine einzelne HTML-Seite, die die riskanten Annahmen prüft:
 
 ### Phase 1 – MVP
 
-- [ ] Projekt-Setup, PWA-Manifest, Deploy auf GitHub Pages
-- [ ] Einstellungen: Name, Gemini-Key, GitHub-Token, `owner/repo`, Modell-ID, „Verbindung testen“
-- [ ] Aufnahme (Start/Pause/Stopp, Timer) und Datei-Import
-- [ ] Transkription als Job mit sichtbarem Status
-- [ ] Markdown erzeugen und ins Vault schreiben
-- [ ] Historie (Liste aus dem Vault) und Detailansicht
-- [ ] Export: `.md` herunterladen, in Zwischenablage kopieren
+- [x] Projekt-Setup, PWA-Manifest, Deploy auf GitHub Pages
+- [x] Einstellungen: Name, Gemini-Key, GitHub-Token, `owner/repo`, Modell-ID, „Verbindung testen“
+- [x] Aufnahme (Start/Pause/Stopp, Timer) und Datei-Import
+- [x] Transkription als Job mit sichtbarem Status
+- [x] Markdown erzeugen und ins Vault schreiben
+- [x] Historie (Liste aus dem Vault) und Detailansicht
+- [x] Export: `.md` herunterladen, in Zwischenablage kopieren
+
+Stand 2026-10-07: Code steht und ist im Browser mit simulierten Gemini-/GitHub-Antworten getestet; Test mit echten Keys auf echten Handys steht aus.
 
 **Fertig, wenn:** Yunus und Calvin auf ihren Handys je eine Aufnahme machen, sie in ihrer Historie und in Obsidian sehen und als Datei herunterladen können.
 
@@ -310,9 +312,9 @@ Eine einzelne HTML-Seite, die die riskanten Annahmen prüft:
 
 - [ ] Sprecher umbenennen
 - [ ] Glossar (im Vault gespeichert, damit Handy und PC dasselbe nutzen)
-- [ ] Wake Lock, Autosave, Wiederherstellung nach Absturz
-- [ ] Offline aufnehmen, später transkribieren
-- [ ] Suche und Filter in der Historie
+- [x] Wake Lock, Autosave, Wiederherstellung nach Absturz
+- [x] Offline aufnehmen, später transkribieren
+- [ ] Suche und Filter in der Historie (einfache Titelsuche ist da)
 - [ ] Marker-Button während der Aufnahme (Zeitpunkt wird im Transkript markiert)
 - [ ] Einstellungen als Text exportieren/importieren (Handy ↔ PC)
 - [ ] Saubere 429-/Netzwerk-Fehlerbehandlung
@@ -370,6 +372,9 @@ Getroffene Entscheidungen hier mit Datum eintragen.
 | Datum | Entscheidung |
 |---|---|
 | 2026-10-07 | Spike-Seite wird für Phase 0 per eigenem Workflow (`spike-pages.yml`) auf GitHub Pages veröffentlicht, weil das Mikrofon auf dem Handy nur über HTTPS geht. In Phase 1 ersetzt `deploy.yml` diesen Workflow. |
+| 2026-10-07 | Phase 1 parallel zu den Phase-0-Tests begonnen. Engine A ist vorläufiger Default; Engine B ist eingebaut und holt den Titel mit einem zweiten Request vom Flash-Modell. |
+| 2026-10-07 | `deploy.yml` ersetzt `spike-pages.yml`: App unter der Pages-URL, Spike unter `<pages-url>/spike/`. |
+| 2026-10-07 | 429/5xx: Das Gemini-SDK wiederholt selbst (bis 4 Versuche mit Backoff). Keine eigene Retry-Schleife; schlägt es endgültig fehl, zeigt der Job „Erneut versuchen“. |
 
 ---
 

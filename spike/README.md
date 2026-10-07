@@ -2,11 +2,11 @@
 
 Wegwerf-Seite (`index.html`) zum Prüfen der riskanten Annahmen aus `PLAN.md` Abschnitt 7. Kein App-Code, wird in Phase 1 durch die echte App ersetzt.
 
-Öffnen: `https://yunusea12.github.io/TranskribierApp/` (sobald GitHub Pages aktiv ist, siehe unten). Das Mikrofon funktioniert nur über HTTPS, nicht über eine lokal geöffnete Datei auf dem Handy.
+Öffnen: `https://yunusea12.github.io/TranskribierApp/spike/`. Das Mikrofon funktioniert nur über HTTPS, nicht über eine lokal geöffnete Datei auf dem Handy.
 
 ## Vorbereitung (einmalig)
 
-1. Im App-Repo: Settings → Pages → Source: **GitHub Actions**. Danach Actions → „Deploy spike to GitHub Pages“ → *Run workflow*.
+1. Im App-Repo: Settings → Pages → Source: **GitHub Actions** (erledigt).
 2. Jeder für sich: privates Repo `mitschrift-vault` mit README anlegen, fine-grained Token nur für dieses Repo (*Contents: Read and write*), Gemini-Key im AI Studio. Siehe `PLAN.md` Abschnitt 8.
 3. Auf der Spike-Seite unter „0. Einstellungen“ Key, Token, `owner/mitschrift-vault` und Namen eintragen, „Speichern“.
 

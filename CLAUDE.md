@@ -9,7 +9,7 @@ Plan, Begründungen und Phasen stehen in `PLAN.md`. Vor einer Aufgabe den passen
 
 ## Status
 
-Phase 0 (Spike): `spike/index.html` steht, echte Tests auf den Handys stehen aus (Anleitung in `spike/README.md`). Noch kein App-Code. Diese Zeile beim Phasenwechsel aktualisieren.
+Phase 0 und 1 parallel. Spike (`spike/`, Anleitung in `spike/README.md`) wartet auf Handy-Tests. MVP-Code für Phase 1 steht, Test mit echten Keys auf echten Handys steht aus (Anleitung in `README.md`). Diese Zeile beim Phasenwechsel aktualisieren.
 
 ## Stack
 
@@ -23,8 +23,6 @@ Phase 0 (Spike): `spike/index.html` steht, echte Tests auf den Handys stehen aus
 
 ## Befehle
 
-Gelten, sobald das Projekt-Setup aus Phase 1 steht:
-
 ```bash
 npm run dev      # lokaler Dev-Server
 npm run build    # Produktions-Build nach dist/
@@ -32,7 +30,7 @@ npm run test     # Vitest
 npm run lint     # ESLint + tsc --noEmit
 ```
 
-Deploy läuft automatisch über `.github/workflows/deploy.yml` bei Push auf `main`.
+Deploy läuft automatisch über `.github/workflows/deploy.yml` bei Push auf `main` (Lint, Tests, Build; Spike wird nach `/spike/` kopiert). Pull Requests werden nur gebaut und getestet.
 
 ## Aufbau
 
