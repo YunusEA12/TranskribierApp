@@ -1,7 +1,7 @@
 # Mitschrift
 
 Private Transkript-App für zwei Nutzer (Yunus, Calvin) nach dem Vorbild von Plaud:
-Audio aufnehmen oder importieren → mit Gemini transkribieren (Sprecher, Zeitstempel, Titel) → als Markdown an Obsidian übergeben (`obsidian://new`). Einzige Einrichtung für Nutzer: der eigene Gemini-API-Key.
+Audio aufnehmen oder importieren → mit Gemini transkribieren (Sprecher, Zeitstempel, Titel) → als Markdown in den gemeinsamen Speicher schreiben: ein privates GitHub-Repo (`YunusEA12/mitschrift-daten`), Ordner `Transkripte/<Name>/<Jahr>/`. Beide sehen in der App die gemeinsame Historie.
 
 Statische PWA auf GitHub Pages. Kein Backend. Die Analyse der Transkripte passiert außerhalb der App.
 
@@ -9,7 +9,7 @@ Plan, Begründungen und Phasen stehen in `PLAN.md`. Vor einer Aufgabe den passen
 
 ## Status
 
-Phase 1 im Test auf echten Handys: Aufnahme, Transkription, Ablage in Obsidian per `obsidian://new`, neues Design. Spike (`spike/`) bleibt für Engine-Vergleiche erreichbar. Diese Zeile beim Phasenwechsel aktualisieren.
+Phase 1 im Test auf echten Handys: Aufnahme, Transkription im Hintergrund, gemeinsamer Speicher (GitHub-Repo) mit QR-Einladung, gemeinsame Historie. Diese Zeile beim Phasenwechsel aktualisieren.
 
 ## Stack
 
@@ -17,8 +17,8 @@ Phase 1 im Test auf echten Handys: Aufnahme, Transkription, Ablage in Obsidian p
 - `vite-plugin-pwa` für Manifest und Service Worker
 - Dexie (IndexedDB) für Audio, Jobs und den Historien-Cache
 - `@google/genai` für Gemini (Interactions API + Files API)
-- Obsidian-URI (`obsidian://new`) für die Ablage im Vault
-- GitHub REST API per `fetch` nur für die optionale Sicherung, kein Octokit
+- GitHub REST API per `fetch` für den gemeinsamen Speicher, kein Octokit
+- `qrcode` und `jsqr` für die Einladung per QR-Code
 - Vitest für Logik-Tests
 - Schlichtes CSS, kein UI-Framework
 
@@ -38,7 +38,7 @@ Deploy läuft automatisch über `.github/workflows/deploy.yml` bei Push auf `mai
 ```
 src/recording/      Aufnahme (MediaRecorder, Autosave, Wake Lock), Datei-Import
 src/transcription/  TranscriptionEngine-Interface, flashEngine, transcribeEngine, Prompt, Schema
-src/vault/          Markdown-Erzeugung, Dateinamen, Übergabe an Obsidian, optionale GitHub-Sicherung
+src/vault/          Markdown-Erzeugung, Dateinamen, GitHub-Client, gemeinsamer Speicher
 src/components/     kleine UI-Bausteine (Icons)
 src/jobs/           Zustandsmaschine pro Aufnahme
 src/settings/       Einstellungen in localStorage
@@ -47,7 +47,7 @@ src/pages/          Record, History, Transcript, Settings
 spike/              Wegwerf-Code aus Phase 0, wird nicht deployt
 ```
 
-Datenfluss: `recording` → Job in `jobs/queue.ts` → `transcription` → `vault/markdown.ts` → Tabelle `transcripts` in IndexedDB → per Tipp `vault/obsidian.ts`. Optional zusätzlich `vault/vaultRepo.ts` (GitHub).
+Datenfluss: `recording` → Job in `jobs/queue.ts` → `transcription` → `vault/markdown.ts` → Tabelle `transcripts` in IndexedDB → `vault/vaultRepo.ts` (Repo). Historie: lokale `transcripts` + Repo-Liste (`remote`).
 
 Job-Zustände: `recorded → uploading → transcribing → saving → done`, jeder Schritt kann `failed` werden und muss wiederholbar sein.
 
@@ -64,7 +64,8 @@ Job-Zustände: `recorded → uploading → transcribing → saving → done`, je
 9. **Aufnahmen dürfen nie verloren gehen.** Erst lokal speichern, dann verarbeiten. Ein Fehler bei Gemini oder GitHub lässt die Aufnahme unangetastet.
 10. **Nichts von Plaud übernehmen** außer der Idee: keine Namen, Texte, Logos oder Screenshots.
 11. **Design gehört dazu.** Die Nutzer wollen ein ansprechendes UI (seit 2026-10-07). Farben nur über die Tokens in `src/styles.css`, beide Themes (hell/dunkel), Systemschriften, Handy zuerst.
-12. **Pflicht sind nur der API-Key und „Wer bist du?“ (Yunus/Calvin).** Der gemeinsame Vault heißt fest „Mitschrift“. Keine neue Pflicht-Einstellung einführen, ohne nachzufragen.
+12. **Pflicht sind nur der API-Key, „Wer bist du?“ (Yunus/Calvin) und die Verbindung zum Speicher** (Yunus: Token, Calvin: QR-Code). Keine neue Pflicht-Einstellung einführen, ohne nachzufragen.
+13. **Der Speicher-Token verlässt das Gerät nur als QR-Code auf dem Bildschirm** (Einladung). Nie in Logs, Links oder Dateien.
 
 ## Arbeitsweise
 
@@ -72,8 +73,8 @@ Job-Zustände: `recorded → uploading → transcribing → saving → done`, je
 - Kleine Schritte, ein Thema pro Commit.
 - Entscheidungen mit Datum in `PLAN.md` Abschnitt 10 eintragen.
 - Gemini- und GitHub-Details gegen die aktuelle Doku prüfen (Links am Ende von `PLAN.md`), nicht aus dem Gedächtnis schreiben. Die Interactions API ist neu, Modellnamen und Limits ändern sich häufig.
-- Reine Logik (`vault/markdown.ts`, `vault/paths.ts`, `vault/obsidian.ts`, `transcription/schema.ts`, `jobs/queue.ts`) bekommt Vitest-Tests. Aufnahme und PWA-Verhalten werden von Hand auf echten Handys getestet; dafür eine kurze Test-Anleitung ausgeben.
-- Netzwerkaufrufe laufen nur über `vault/githubClient.ts` und `transcription/` (Gemini), nicht direkt aus Komponenten. Die Übergabe an Obsidian läuft nur über `vault/obsidian.ts`.
+- Reine Logik (`vault/markdown.ts`, `vault/paths.ts`, `settings/invite.ts`, `transcription/schema.ts`, `jobs/queue.ts`) bekommt Vitest-Tests. Aufnahme und PWA-Verhalten werden von Hand auf echten Handys getestet; dafür eine kurze Test-Anleitung ausgeben.
+- Netzwerkaufrufe laufen nur über `vault/githubClient.ts` und `transcription/` (Gemini), nicht direkt aus Komponenten.
 - Fehler werden dem Nutzer als verständlicher deutscher Satz gezeigt, mit „Erneut versuchen“.
 
 ## Sprache

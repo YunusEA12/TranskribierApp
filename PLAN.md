@@ -1,8 +1,8 @@
 # Mitschrift – Projektplan
 
 > **Arbeitstitel.** Eigener Plaud-Ersatz für Yunus und Calvin:
-> aufnehmen → transkribieren (mit Sprechern) → als Markdown im Obsidian-Vault ablegen.
-> Einzige Einrichtung: der eigene Gemini-API-Key.
+> aufnehmen → transkribieren (mit Sprechern) → als Markdown in einem gemeinsamen Speicher ablegen.
+> Stand 2026-10-07: Speicher ist ein privates GitHub-Repo (`YunusEA12/mitschrift-daten`), Ordner pro Person, gemeinsame Historie in der App. Obsidian ist optional (siehe Abschnitt 10).
 > Die Analyse passiert bewusst außerhalb der App.
 
 Stand: 2026-10-07 · Fakten zu Gemini/GitHub stammen aus den offiziellen Dokus (Links am Ende) und können sich ändern.
@@ -76,8 +76,9 @@ Handy / PC (Browser, installierte PWA)
 | Hosting | GitHub Pages, **öffentliches** App-Repo | Kostenlos; das Repo enthält keine Geheimnisse und keine Daten |
 | Backend | Keins | Nichts zu betreiben; der Browser spricht direkt mit Gemini und GitHub |
 | Schlüssel | Jeder trägt nur seinen eigenen Gemini-Key in den Einstellungen ein; gespeichert nur lokal im Browser | Kein Key im Repo, getrennte Kontingente, keine weitere Einrichtung |
-| „Datenbank“ | Der Obsidian-Vault. Die App übergibt jede Notiz per `obsidian://new` an die Obsidian-App auf dem Gerät | Wunsch der Nutzer: nur API-Key, kein GitHub. Ohne Backend kann eine Web-App nur so in einen Vault schreiben |
-| Nutzer / Historie | Historie lokal in der App (IndexedDB); im Vault steht `user` im Frontmatter | Kein Login nötig; ein gemeinsamer Vault ist möglich (Sync über Obsidian) |
+| „Datenbank“ | Ein privates GitHub-Repo für beide (`mitschrift-daten`), eine Markdown-Datei pro Transkript unter `Transkripte/<Name>/<Jahr>/` | Kostenlos, kein Server, für KI-Analyse direkt lesbar. Obsidian Sync wäre kostenpflichtig für beide und komplizierter |
+| Nutzer / Historie | Gemeinsame Historie in der App aus dem Repo, Filter Alle/Yunus/Calvin | Wunsch: jeder sieht alles, getrennte Ordner |
+| Zugang zum Speicher | Yunus erstellt einmal einen fine-grained Token nur für dieses Repo; Calvin übernimmt ihn per QR-Code aus Yunus' App | Calvin braucht kein GitHub-Konto. Der Token erscheint nur auf dem Bildschirm, nie im Repo oder in Chats |
 | Audio | Bleibt lokal auf dem Gerät (IndexedDB), Download möglich | Git ist für große Binärdateien ungeeignet |
 | Analyse | Außerhalb der App | Anforderung |
 
@@ -403,6 +404,7 @@ Getroffene Entscheidungen hier mit Datum eintragen.
 | 2026-10-07 | Erster echter Test (iPhone, 19-min-Import): Transkription brach mit „Load failed“ ab, weil iOS die App im Hintergrund pausiert und die offene Anfrage kappt. Lösung: Transkription läuft als Gemini-Interaction mit `background: true`; die App speichert die Id im Job und fragt nur noch kurz nach (Polling). Abbrüche beim Nachfragen werden übersprungen, nach Neustart oder Rückkehr in die App geht es beim selben Auftrag weiter. Hochladen braucht weiterhin die geöffnete App. |
 | 2026-10-07 | Updates der installierten App: Service Worker im Modus `prompt` statt `autoUpdate`. Neue Versionen werden im Hintergrund geladen und nur eingespielt, wenn keine Aufnahme läuft (direkt nach dem Öffnen, beim Verlassen der App oder per Tipp auf „Aktualisieren“). Version und „Nach Update suchen“ in den Einstellungen. Neu installieren ist nie nötig. |
 | 2026-10-07 | Fester gemeinsamer Vault „Mitschrift“ statt Vault-Name-Abfrage. Pflicht sind nur noch Key und „Wer bist du?“ (Yunus/Calvin); ohne Namen wartet die Verarbeitung, damit keine Notiz ohne Personenordner entsteht. Speichern in Obsidian direkt aus dem Verlauf. Die gemeinsame Historie ist der Vault in Obsidian; die Historie in der App bleibt pro Gerät (eine geteilte App-Historie bräuchte einen gemeinsamen Speicher, offen). |
+| 2026-10-07 | **Speicher gewechselt: gemeinsames privates GitHub-Repo statt Obsidian.** Obsidian hätte für einen geteilten Vault Obsidian Sync für beide (kostenpflichtig) und eine für die Nutzer zu komplizierte Einrichtung gebraucht, und die App hätte trotzdem keine gemeinsame Historie zeigen können. Jetzt: Repo `YunusEA12/mitschrift-daten`, Ordner `Transkripte/<Name>/<Jahr>/`, Speichern automatisch nach dem Transkribieren, gemeinsame Historie in der App. Einrichtung: Yunus legt Repo und Token an (vorbefüllte Links), Calvin scannt einen QR-Code in Yunus' App. Pflicht: Key, „Wer bist du?“, Speicher. Die Übergabe per `obsidian://` ist entfernt; wer Obsidian nutzen will, öffnet das Repo am PC als Vault. Markdown-Format (4.3) unverändert. |
 | 2026-10-07 | Optik: Nutzer wünschen ein schöneres Design. Regel 11 („Funktion vor Optik“) gilt damit nicht mehr absolut. Neues UI mit Tab-Leiste, Rekorder mit Pegelanzeige, Karten im Verlauf, Sprecherfarben. Systemschriften, keine externen Fonts (offline). |
 
 ---
