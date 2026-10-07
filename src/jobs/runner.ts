@@ -4,7 +4,9 @@ import { db } from '../db/db';
 import { toUserMessage, UserError } from '../lib/errors';
 import { getSettings, missingSettings, storageConnected } from '../settings/settingsStore';
 import { createEngine } from '../transcription/createEngine';
-import { createGeminiClient, deleteUpload, uploadAudio } from '../transcription/gemini';
+import type { AudioInput } from '../transcription/engine';
+import { createGeminiClient, deleteUpload, geminiMimeType, INLINE_MAX_BYTES, uploadAudio } from '../transcription/gemini';
+import { blobToBase64 } from '../lib/blob';
 import type { AudioSource, TranscriptMeta } from '../types';
 import { createTranscript, toMarkdown } from '../vault/markdown';
 import { parseTranscriptPath, transcriptPath } from '../vault/paths';
@@ -60,7 +62,7 @@ export async function retryJob(id: string): Promise<void> {
 /** Removes a job with its local audio and transcript, and the upload at Gemini if there is one. */
 export async function discardJob(id: string): Promise<void> {
   const job = await db.jobs.get(id);
-  if (job?.upload && job.status !== 'done' && getSettings().geminiKey) {
+  if (job?.upload?.name && job.status !== 'done' && getSettings().geminiKey) {
     await deleteUpload(createGeminiClient(getSettings().geminiKey), job.upload.name);
   }
   await db.transaction('rw', [db.jobs, db.audio, db.transcripts], async () => {
@@ -161,15 +163,25 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
     case 'uploading': {
       const audio = await db.audio.get(job.id);
       if (!audio) throw new UserError('Die Audiodatei ist auf diesem Gerät nicht mehr vorhanden.');
-      const upload = await uploadAudio(ai, audio.blob, job.mimeType);
+      // Small recordings skip the Files API and travel inside the transcription request: one round trip less.
+      const upload =
+        audio.blob.size <= INLINE_MAX_BYTES
+          ? { name: '', uri: '', mimeType: geminiMimeType(job.mimeType), uploadedAt: Date.now(), inline: true }
+          : await uploadAudio(ai, audio.blob, job.mimeType);
       await db.jobs.update(job.id, uploadDone(upload, Date.now()));
       return;
     }
     case 'transcribing': {
       const engine = createEngine(ai, settings);
+      let input: AudioInput = { uri: job.upload!.uri, mimeType: job.upload!.mimeType };
+      if (job.upload!.inline) {
+        const audio = await db.audio.get(job.id);
+        if (!audio) throw new UserError('Die Audiodatei ist auf diesem Gerät nicht mehr vorhanden.');
+        input = { data: await blobToBase64(audio.blob), mimeType: job.upload!.mimeType };
+      }
       let lastWrite = 0;
       const result = await engine.transcribe(
-        job.upload!,
+        input,
         { speakerCount: job.speakerCount, glossary: [], removeFillers: settings.removeFillers },
         {
           // Progress for the job card, written at most once a second.
@@ -214,7 +226,7 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       await uploadTranscript(job.id, path, markdown, meta.title);
       await db.jobs.update(job.id, savingDone(path, Date.now()));
       // The transcript is safe on the device; the copy at Google is no longer needed (CLAUDE.md rule 8).
-      if (job.upload) await deleteUpload(ai, job.upload.name);
+      if (job.upload?.name) await deleteUpload(ai, job.upload.name);
       return;
     }
   }

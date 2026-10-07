@@ -4,6 +4,7 @@
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { HttpError, UserError } from '../lib/errors';
 import type { UploadedAudio } from '../jobs/queue';
+import type { AudioInput } from './engine';
 
 export function createGeminiClient(apiKey: string): GoogleGenAI {
   return new GoogleGenAI({ apiKey: apiKey.trim(), httpOptions: { timeout: CLIENT_TIMEOUT_MS } });
@@ -27,6 +28,9 @@ export function geminiMimeType(mimeType: string): string {
   const base = mimeType.split(';')[0]!.trim().toLowerCase();
   return MIME_ALIASES[base] ?? base;
 }
+
+/** Recordings up to this size go inside the request (base64 adds a third; Gemini accepts 20 MB per request). */
+export const INLINE_MAX_BYTES = 8 * 1024 * 1024;
 
 const POLL_MS = 2000;
 const MAX_PROCESSING_MS = 10 * 60 * 1000;
@@ -105,7 +109,8 @@ function isThinkingUnsupported(e: unknown): boolean {
 }
 
 /** Text answer for a prompt plus an uploaded audio file. Low thinking: a verbatim transcript needs no reasoning. */
-export async function streamText(ai: GoogleGenAI, model: string, prompt: string, audio: UploadedAudio, options: StreamOptions = {}): Promise<string> {
+export async function streamText(ai: GoogleGenAI, model: string, prompt: string, audio: AudioInput, options: StreamOptions = {}): Promise<string> {
+  const audioPart = 'data' in audio ? { inlineData: { data: audio.data, mimeType: audio.mimeType } } : { fileData: { fileUri: audio.uri, mimeType: audio.mimeType } };
   const run = (withThinking: boolean) =>
     geminiCall(async () => {
       // Watchdog: give up if Gemini goes quiet, instead of waiting for the 20-minute client limit.
@@ -115,7 +120,7 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
       try {
         const stream = await ai.models.generateContentStream({
           model,
-          contents: [{ role: 'user', parts: [{ text: prompt }, { fileData: { fileUri: audio.uri, mimeType: audio.mimeType } }] }],
+          contents: [{ role: 'user', parts: [{ text: prompt }, audioPart] }],
           config: {
             abortSignal: controller.signal,
             ...(options.jsonSchema ? { responseMimeType: 'application/json', responseJsonSchema: options.jsonSchema } : {}),

@@ -1,6 +1,7 @@
 // Step-by-step check of the whole Gemini path with a 2-second test tone, so a problem on a real
 // phone can be located without developer tools. The log contains no key.
 
+import { blobToBase64 } from '../lib/blob';
 import { googleErrorDetail, toUserMessage } from '../lib/errors';
 import type { Settings } from '../settings/settingsStore';
 import { checkModel, createGeminiClient, deleteUpload, listModels, streamText, uploadAudio } from './gemini';
@@ -75,6 +76,21 @@ async function runChecks(s: Settings, log: (line: DiagnosisLine) => void): Promi
     return;
   }
 
+  // The path short recordings take: audio inside the request, no upload.
+  t = performance.now();
+  try {
+    let first = 0;
+    const data = await blobToBase64(testToneWav());
+    const text = await streamText(ai, model, 'Was hörst du? Antworte in einem kurzen Satz.', { data, mimeType: 'audio/wav' }, {
+      onProgress: () => (first ||= performance.now()),
+    });
+    const firstAfter = first ? ` · erster Text nach ${((first - t) / 1000).toFixed(1).replace('.', ',')} s` : '';
+    log({ ok: Boolean(text), text: `Kurze Aufnahme, direkt mitgeschickt (${secs(t)}${firstAfter}): ${text ? snippet(text) : 'leer'}` });
+  } catch (e) {
+    log({ ok: false, text: `Kurze Aufnahme, direkt mitgeschickt (${secs(t)}): ${clean(e)}` });
+  }
+
+  // The path long recordings take: upload to the Files API first.
   t = performance.now();
   let upload;
   try {
@@ -93,9 +109,9 @@ async function runChecks(s: Settings, log: (line: DiagnosisLine) => void): Promi
         onProgress: () => (first ||= performance.now()),
       });
       const firstAfter = first ? ` · erster Text nach ${((first - t) / 1000).toFixed(1).replace('.', ',')} s` : '';
-      log({ ok: Boolean(text), text: `Antwort von Gemini (${secs(t)}${firstAfter}): ${text ? snippet(text) : 'leer'}` });
+      log({ ok: Boolean(text), text: `Lange Aufnahme, über Upload (${secs(t)}${firstAfter}): ${text ? snippet(text) : 'leer'}` });
     } catch (e) {
-      log({ ok: false, text: `Antwort von Gemini (${secs(t)}): ${clean(e)}` });
+      log({ ok: false, text: `Lange Aufnahme, über Upload (${secs(t)}): ${clean(e)}` });
     }
 
     t = performance.now();

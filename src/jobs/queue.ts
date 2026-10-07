@@ -15,6 +15,8 @@ export interface UploadedAudio {
   uri: string;
   mimeType: string;
   uploadedAt: number;
+  /** Small recordings are not uploaded but sent inside the transcription request. */
+  inline?: boolean;
 }
 
 export interface Job {
@@ -22,6 +24,8 @@ export interface Job {
   recordedAt: number;
   updatedAt: number;
   status: JobStatus;
+  /** When the current step began, to show how long it has been running. */
+  stepStartedAt?: number;
   failedStep?: Step;
   error?: string;
   source: AudioSource;
@@ -64,6 +68,7 @@ export function isRunnable(job: Job): boolean {
 }
 
 export function uploadExpired(job: Job, now: number): boolean {
+  if (job.upload?.inline) return false; // the audio is on the device; nothing at Google can expire
   return !job.upload || now - job.upload.uploadedAt > UPLOAD_TTL_MS;
 }
 
@@ -83,15 +88,15 @@ export function currentStep(job: Job, now: number): Step | null {
 }
 
 export function stepStarted(step: Step, now: number): Partial<Job> {
-  return { status: step, error: undefined, failedStep: undefined, updatedAt: now };
+  return { status: step, stepStartedAt: now, error: undefined, failedStep: undefined, updatedAt: now };
 }
 
 export function uploadDone(upload: UploadedAudio, now: number): Partial<Job> {
-  return { status: 'transcribing', upload, updatedAt: now };
+  return { status: 'transcribing', stepStartedAt: now, upload, updatedAt: now };
 }
 
 export function transcriptionDone(result: TranscriptResult, model: string, now: number): Partial<Job> {
-  return { status: 'saving', result, model, progressChars: undefined, updatedAt: now };
+  return { status: 'saving', stepStartedAt: now, result, model, progressChars: undefined, updatedAt: now };
 }
 
 export function savingDone(vaultPath: string, now: number): Partial<Job> {

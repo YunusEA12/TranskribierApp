@@ -29,6 +29,13 @@ describe('streamText', () => {
     expect(params.config).toMatchObject({ responseMimeType: 'application/json', responseJsonSchema: { type: 'object' }, thinkingConfig: { thinkingLevel: 'LOW' } });
   });
 
+  it('sends small recordings inline instead of as a file reference', async () => {
+    const { ai, generateContentStream } = fakeAi(async () => chunks('ok'));
+    await streamText(ai, 'm', 'p', { data: 'QUJD', mimeType: 'audio/mp4' });
+    const params = generateContentStream.mock.calls[0]![0] as { contents: Array<{ parts: unknown[] }> };
+    expect(params.contents[0]!.parts[1]).toEqual({ inlineData: { data: 'QUJD', mimeType: 'audio/mp4' } });
+  });
+
   it('retries without thinking settings when the model does not support them', async () => {
     const { ai, generateContentStream } = fakeAi(async (params) => {
       if ((params.config as Record<string, unknown>).thinkingConfig) throw new HttpError('gemini', 400, 'Thinking level is not supported for this model.');

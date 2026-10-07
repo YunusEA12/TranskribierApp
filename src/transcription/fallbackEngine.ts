@@ -1,10 +1,9 @@
 // When the main model's quota is used up (HTTP 429, after the SDK's own retries), try a weaker model
 // instead of failing. `model` reports the model that actually produced the transcript.
 
-import type { UploadedAudio } from '../jobs/queue';
 import { HttpError } from '../lib/errors';
 import type { TranscriptResult } from '../types';
-import type { TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
+import type { AudioInput, TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
 
 export function isQuotaError(e: unknown): boolean {
   return e instanceof HttpError && e.status === 429;
@@ -20,7 +19,7 @@ export class FallbackEngine implements TranscriptionEngine {
     this.model = primary.model;
   }
 
-  async transcribe(audio: UploadedAudio, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
+  async transcribe(audio: AudioInput, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
     try {
       const result = await this.primary.transcribe(audio, options, context);
       this.model = this.primary.model;

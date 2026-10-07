@@ -51,6 +51,16 @@ describe('job state machine', () => {
     expect(retry(failed, 4000).status).toBe('transcribing');
   });
 
+  it('inline audio never expires', () => {
+    const inline = apply(base, uploadDone({ name: '', uri: '', mimeType: 'audio/mp4', uploadedAt: 0, inline: true }, 0));
+    expect(currentStep(inline, UPLOAD_TTL_MS * 10)).toBe('transcribing');
+  });
+
+  it('records when each step started', () => {
+    expect(stepStarted('uploading', 1234).stepStartedAt).toBe(1234);
+    expect(uploadDone(upload, 2000).stepStartedAt).toBe(2000);
+  });
+
   it('retry is a no-op for jobs that did not fail', () => {
     expect(retry(base, 1)).toEqual({});
   });

@@ -1,5 +1,7 @@
-import type { UploadedAudio } from '../jobs/queue';
 import type { TranscriptResult } from '../types';
+
+/** The recording for Gemini: a file in the Files API, or (for small recordings) the bytes themselves, base64. */
+export type AudioInput = { uri: string; mimeType: string } | { data: string; mimeType: string };
 
 export interface TranscribeContext {
   /** Number of characters Gemini has sent so far, for a progress display. */
@@ -15,5 +17,5 @@ export interface TranscribeOptions {
 /** Turns an uploaded audio file into a transcript. Engines are interchangeable (PLAN.md 3.2). */
 export interface TranscriptionEngine {
   readonly model: string;
-  transcribe(audio: UploadedAudio, options: TranscribeOptions, context?: TranscribeContext): Promise<TranscriptResult>;
+  transcribe(audio: AudioInput, options: TranscribeOptions, context?: TranscribeContext): Promise<TranscriptResult>;
 }

@@ -29,6 +29,23 @@ function stepClass(job: Job, step: Step): string {
   return '';
 }
 
+/** Current time, refreshed every second (for "running for …"). 0 until mounted. */
+function useNow(): number {
+  const [now, setNow] = useState(0);
+  useEffect(() => {
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
+}
+
+function StepTimer({ since }: { since?: number }) {
+  const now = useNow();
+  if (!since || !now) return null;
+  return <span className="step-timer">läuft seit {formatClock((now - since) / 1000)}</span>;
+}
+
 function TranscribingInfo({ job }: { job: Job }) {
   return (
     <small>
@@ -49,6 +66,7 @@ function JobCard({ job, waitingReason }: { job: Job; waitingReason: string }) {
         <b>{label}</b>
         <small>{formatClock(job.durationSec)}</small>
       </div>
+      {job.status !== 'failed' && job.status !== 'recorded' && <StepTimer since={job.stepStartedAt} />}
       <div className="steps">
         {STEPS.map((s) => (
           <div key={s.step} className={stepClass(job, s.step)}>

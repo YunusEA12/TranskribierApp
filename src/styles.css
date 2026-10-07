@@ -260,6 +260,7 @@ label.toggle input { width: 20px; height: 20px; accent-color: var(--vault); }
 .steps div.fail::before { background: var(--rec); }
 .steps div.fail { color: var(--rec); font-weight: 600; }
 @keyframes progress { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.step-timer { font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -4px; }
 .job.failed { outline: 1.5px solid color-mix(in srgb, var(--rec) 45%, transparent); }
 
 .empty { display: grid; justify-items: center; gap: 10px; text-align: center; padding: 40px 16px; color: var(--muted); }
