@@ -20,6 +20,8 @@ Nur ein Schritt ist Pflicht: der eigene **Gemini-API-Key**.
 
 **Ersatzmodell:** Im kostenlosen Kontingent hat jedes Modell ein Tageslimit. Unter „Weitere Einstellungen → Ersatzmodell“ kann ein schwächeres Modell (z. B. „flash-lite“) einspringen, wenn das Limit erreicht ist.
 
+**Updates:** Die App aktualisiert sich selbst, neu hinzufügen ist nie nötig. Eine neue Version wird beim Öffnen geladen und eingespielt, sobald keine Aufnahme läuft. Unter „Einstellungen → App-Version“ steht die aktuelle Version, dort gibt es auch „Nach Update suchen“.
+
 Der Key bleibt nur auf dem Gerät. Nie in Chats, Issues oder ins Repo schreiben.
 
 ## Handy-Test
