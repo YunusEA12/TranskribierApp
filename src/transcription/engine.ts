@@ -4,6 +4,8 @@ import type { TranscriptResult } from '../types';
 export type AudioInput = { uri: string; mimeType: string } | { data: string; mimeType: string };
 
 export interface TranscribeContext {
+  signal?: AbortSignal;
+  firstChunkMs?: number;
   /** Number of characters Gemini has sent so far, for a progress display. */
   onProgress?: (chars: number) => void;
 }

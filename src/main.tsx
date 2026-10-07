@@ -2,12 +2,12 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { requestPersistentStorage } from './db/db';
-import { kickRunner } from './jobs/runner';
+import { kickRunner, processingActive } from './jobs/runner';
 import { startUpdates } from './pwa/update';
 import { recorder } from './recording/recorder';
 import './styles.css';
 
-startUpdates({ isIdle: () => recorder.state === 'idle' });
+startUpdates({ isIdle: () => recorder.state === 'idle' && !processingActive() });
 void requestPersistentStorage();
 
 // Resume jobs interrupted by closing the app, and pick up offline recordings when back online.

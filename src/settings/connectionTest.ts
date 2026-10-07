@@ -1,7 +1,7 @@
 import { HttpError, toUserMessage } from '../lib/errors';
 import { checkModel, createGeminiClient, listModels, NOT_FOR_AUDIO } from '../transcription/gemini';
 import { clientFromSettings } from '../vault/vaultRepo';
-import { storageConnected, type Settings } from './settingsStore';
+import { REPO_RE, type Settings } from './settingsStore';
 
 export interface CheckResult {
   label: string;
@@ -74,7 +74,7 @@ export async function testGemini(s: Settings): Promise<GeminiReport> {
 }
 
 export async function testStorage(s: Settings): Promise<CheckResult> {
-  if (!storageConnected(s)) return { label: 'Speicher', ok: false, message: 'Noch nicht verbunden.' };
+  if (!s.githubToken.trim() || !REPO_RE.test(s.vaultRepo.trim())) return { label: 'Speicher', ok: false, message: 'Noch nicht verbunden.' };
   try {
     const { canPush } = await clientFromSettings(s).checkAccess();
     return canPush

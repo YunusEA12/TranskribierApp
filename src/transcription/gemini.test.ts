@@ -1,9 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GoogleGenAI } from '@google/genai';
 import { HttpError } from '../lib/errors';
-import { streamText } from './gemini';
+import { streamText, uploadAudio } from './gemini';
 
 const audio = { name: 'files/a', uri: 'https://x/files/a', mimeType: 'audio/mp4', uploadedAt: 0 };
+
+describe('upload cancellation', () => {
+  it('aborts a stuck upload and does not continue polling after it resolves late', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (file: object) => void;
+      const upload = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+      const get = vi.fn();
+      const ai = { files: { upload, get } } as unknown as GoogleGenAI;
+      const controller = new AbortController();
+      const pending = uploadAudio(ai, new Blob(['audio']), 'audio/mp4', controller.signal);
+      const check = expect(pending).rejects.toThrow();
+      controller.abort();
+      await check;
+      finish({ name: 'files/a', state: 'PROCESSING' });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(get).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 async function* chunks(...texts: string[]) {
   for (const text of texts) yield { text };
@@ -11,7 +33,7 @@ async function* chunks(...texts: string[]) {
 
 function fakeAi(impl: (params: Record<string, unknown>) => Promise<AsyncGenerator<{ text: string }>>) {
   const generateContentStream = vi.fn(impl);
-  return { ai: { models: { generateContentStream } } as unknown as GoogleGenAI, generateContentStream };
+  return { ai: { models: { generateContentStream, generateContent: vi.fn(() => new Promise(() => {})) } } as unknown as GoogleGenAI, generateContentStream };
 }
 
 describe('streamText', () => {
@@ -62,9 +84,33 @@ describe('streamText', () => {
       })();
     });
     const p = streamText(ai, 'm', 'p', audio);
-    const assertion = expect(p).rejects.toThrow(/zu lange nichts geschickt/);
-    await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+    const assertion = expect(p).rejects.toThrow(/antwortet nicht/);
+    await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
     await assertion;
     vi.useRealTimers();
+  });
+});
+
+describe('stream recovery', () => {
+  it('falls back to regular generation when a stream ignores abort entirely', async () => {
+    vi.useFakeTimers();
+    const generateContent = vi.fn(async () => ({ text: 'Hallo', candidates: [{ finishReason: 'STOP' }] }));
+    const ai = { models: { generateContentStream: async () => new Promise(() => {}), generateContent } } as unknown as GoogleGenAI;
+    const pending = streamText(ai, 'm', 'p', audio, { firstChunkMs: 100 });
+    const check = expect(pending).resolves.toBe('Hallo');
+    await vi.advanceTimersByTimeAsync(100);
+    await check;
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+  it('does not start another billable request after user cancellation', async () => {
+    const controller = new AbortController();
+    const generateContent = vi.fn();
+    const ai = { models: { generateContentStream: async () => new Promise(() => {}), generateContent } } as unknown as GoogleGenAI;
+    const pending = streamText(ai, 'm', 'p', audio, { signal: controller.signal });
+    const check = expect(pending).rejects.toThrow();
+    controller.abort();
+    await check;
+    expect(generateContent).not.toHaveBeenCalled();
   });
 });

@@ -18,7 +18,10 @@ export function QrScanner({ onResult, onCancel }: { onResult: (text: string) => 
     void (async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-        if (done || !video.current) return;
+        if (done || !video.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         video.current.srcObject = stream;
         await video.current.play();
         timer = setInterval(() => {

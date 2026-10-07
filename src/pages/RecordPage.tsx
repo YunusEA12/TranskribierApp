@@ -198,7 +198,7 @@ export function RecordPage() {
             <button
               className={`rec-btn ${active ? 'stop' : ''}`}
               onClick={() => void (active ? stop() : start())}
-              disabled={busy}
+              disabled={busy || systemStopped}
               aria-label={active ? 'Stoppen und transkribieren' : 'Aufnahme starten'}
             />
             <span className="caption">{active ? 'Fertig' : 'Aufnehmen'}</span>

@@ -44,6 +44,7 @@ export function startUpdates(options: { isIdle: () => boolean }): void {
 }
 
 export function installUpdate(): void {
+  if (!isIdle()) return;
   void apply?.();
 }
 

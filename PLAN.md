@@ -29,18 +29,18 @@ Wir orientieren uns an der Funktion, nicht am Auftritt: eigener Name, eigenes UI
 ### 1.2 Muss (v1)
 
 1. Installierbare Web-App (PWA) für Handy und PC, keine Store-App.
-2. Zwei Nutzer (Yunus, Calvin) mit getrennten Historien.
+2. Zwei Nutzer (Yunus, Calvin) mit gemeinsamer Historie und getrennten Ordnern.
 3. Aufnahme im Browser und Import von Audiodateien.
 4. Transkript mit Sprechererkennung (1–5 Sprecher), Zeitstempeln, automatischer Spracherkennung.
 5. Automatisch erzeugter Titel pro Transkript.
-6. Ablage als Markdown im Obsidian-Vault, Historie in der App. Einrichtung nur mit dem Gemini-API-Key (seit 2026-10-07, siehe Abschnitt 10).
+6. Ablage als Markdown im gemeinsamen privaten GitHub-Repo, Historie in der App. Pflicht: Gemini-Key, Nutzer und geprüfter Speicher.
 7. Export: `.md`-Download und „In Zwischenablage kopieren“.
 8. Kostenlos betreibbar.
 
 ### 1.3 Bewusst nicht
 
 - Zusammenfassungen, To-do-Listen, Mindmaps, Chat mit dem Transkript.
-- Schönes Design – funktional reicht.
+- Übernahme fremder Marken oder Assets. Eigenes Design gehört zur App.
 - Eigene Hardware, Telefonmitschnitt, Live-Transkription.
 - Eigenes Backend, Login-System, Nutzerverwaltung.
 
@@ -48,24 +48,12 @@ Wir orientieren uns an der Funktion, nicht am Auftritt: eigener Name, eigenes UI
 
 ## 2. Architektur
 
-```
-Handy / PC (Browser, installierte PWA)
-┌────────────────────────────────────────────────┐
-│ Aufnahme / Import                              │
-│      │  Audio + Job-Status in IndexedDB        │
-│      ▼                                         │
-│ Gemini API (eigener Key, direkt aus Browser)   │──► JSON: Titel, Sprache, Sprecher, Segmente
-│      │                                         │
-│      ▼                                         │
-│ Markdown erzeugen, Transkript in IndexedDB     │
-│      │  (Historie der App)                     │
-│      ▼                                         │
-│ „In Obsidian speichern“ → obsidian://new       │──► Obsidian-App auf demselben Gerät
-└────────────────────────────────────────────────┘    legt die Notiz im Vault an
-                                                        │ Obsidian Sync / iCloud o. Ä.
-                                                        ▼
-                                               Vault auf allen Geräten
-(optional zusätzlich: Sicherung per GitHub-API in ein Repo)
+```text
+Aufnahme / Import → Audio und Job in IndexedDB
+  → Gemini (kleine Dateien inline, große über Files API)
+  → Transkript als Markdown lokal speichern
+  → gemeinsames privates GitHub-Repo
+  → gemeinsame Historie; Obsidian optional am PC
 ```
 
 ### 2.1 Kernentscheidungen
@@ -75,7 +63,7 @@ Handy / PC (Browser, installierte PWA)
 | App-Typ | Statische PWA | Läuft auf Handy und PC, installierbar, kein Store |
 | Hosting | GitHub Pages, **öffentliches** App-Repo | Kostenlos; das Repo enthält keine Geheimnisse und keine Daten |
 | Backend | Keins | Nichts zu betreiben; der Browser spricht direkt mit Gemini und GitHub |
-| Schlüssel | Jeder trägt nur seinen eigenen Gemini-Key in den Einstellungen ein; gespeichert nur lokal im Browser | Kein Key im Repo, getrennte Kontingente, keine weitere Einrichtung |
+| Schlüssel | Eigener Gemini-Key und gemeinsamer GitHub-Token; gespeichert nur lokal im Browser | Kein Key im Repo, getrennte Kontingente, keine weitere Einrichtung |
 | „Datenbank“ | Ein privates GitHub-Repo für beide (`mitschrift-daten`), eine Markdown-Datei pro Transkript unter `Transkripte/<Name>/<Jahr>/` | Kostenlos, kein Server, für KI-Analyse direkt lesbar. Obsidian Sync wäre kostenpflichtig für beide und komplizierter |
 | Nutzer / Historie | Gemeinsame Historie in der App aus dem Repo, Filter Alle/Yunus/Calvin | Wunsch: jeder sieht alles, getrennte Ordner |
 | Zugang zum Speicher | Yunus erstellt einmal einen fine-grained Token nur für dieses Repo; Calvin übernimmt ihn per QR-Code aus Yunus' App | Calvin braucht kein GitHub-Konto. Der Token erscheint nur auf dem Bildschirm, nie im Repo oder in Chats |
@@ -90,8 +78,8 @@ Handy / PC (Browser, installierte PWA)
 
 - Audio kostet 32 Tokens pro Sekunde; bis 9,5 Stunden Audio pro Prompt.
 - Unterstützte Formate u. a. `audio/webm`, `audio/m4a`, `audio/mp3`, `audio/wav`, `audio/ogg`.
-- Files API: bis 2 GB pro Datei, automatische Löschung nach 48 Stunden, kostenlos. Wir laden Audio immer über die Files API hoch und löschen die Datei nach erfolgreichem Transkript aktiv.
-- Aktuelle Schnittstelle ist die Interactions API (`client.interactions.create`) im SDK `@google/genai`.
+- Files API: automatische Löschung nach 48 Stunden. Die App schickt Aufnahmen bis 8 MB inline; größere Dateien werden hochgeladen und nach erfolgreichem Transkript aktiv gelöscht.
+- Engine A nutzt `models.generateContentStream` mit einem normalen `generateContent`-Versuch bei ausgefallenem Streaming. Engine B nutzt die Interactions API (`client.interactions.create`) im SDK `@google/genai`.
 
 ### 3.2 Zwei mögliche Engines
 
@@ -150,7 +138,7 @@ Die Modell-ID ist eine Einstellung, keine Konstante im Code – die Modellnamen 
 
 ## 4. Speicher: Obsidian-Vault
 
-> Stand 2026-10-07: Die App schreibt nicht mehr per GitHub in den Vault, sondern übergibt jede Notiz per `obsidian://new` an Obsidian (siehe 4.7 und Abschnitt 10). 4.1 bis 4.3 gelten weiter (Struktur, Dateiname, Format). 4.4 bis 4.6 beschreiben nur noch die optionale GitHub-Sicherung.
+> Aktueller Stand: Ein gemeinsames privates GitHub-Repo ist der Speicher. Obsidian kann dieses Repo am PC als Vault öffnen. Die App verwendet keine `obsidian://`-Übergabe mehr.
 
 ### 4.1 Struktur des Vault-Repos (pro Nutzer, privat)
 
@@ -207,21 +195,11 @@ Dieses Format ist die Schnittstelle zu Obsidian und zur späteren AI-Analyse. Ä
 - Lesen: Datei erst beim Öffnen laden.
 - Umbenennen eines Sprechers: Frontmatter-Map und die Labels im Text aktualisieren, als ein Commit.
 
-### 4.5 Warum ein Repo pro Nutzer
+### 4.5 Gemeinsamer Speicher
 
-GitHub dokumentiert als Einschränkung, dass fine-grained Tokens nicht für Repos funktionieren, bei denen man nur Collaborator ist. Ein gemeinsames Repo unter Yunus' Account wäre für Calvin also nur mit einem Classic-Token nutzbar, das auf **alle** seine Repos zugreifen darf. Deshalb:
+Yunus richtet `YunusEA12/mitschrift-daten` und einen fine-grained Token nur für dieses Repo mit Contents: Read and write ein. Calvin übernimmt die Verbindung per QR-Code. Jeder verwendet einen eigenen Gemini-Key.
 
-- **Default:** Jeder legt `mitschrift-vault` privat im eigenen Account an und erstellt ein fine-grained Token nur für dieses Repo.
-- **Alternative für einen gemeinsamen Vault:** kostenlose GitHub-Organisation mit einem Repo und einem Ordner pro Nutzer. Für die App ist das nur eine andere Einstellung (`owner/repo` + Basisordner).
-
-### 4.7 Übergabe an Obsidian (Standard)
-
-- Nach der Transkription liegt die Notiz in der App (IndexedDB). „In Obsidian speichern“ öffnet `obsidian://new?vault=<Vault>&file=Transkripte/<Name>/<Jahr>/<Dateiname>&overwrite=true&content=<Markdown>`.
-- Lange Transkripte (URI über 30 000 Zeichen) gehen über die Zwischenablage: `&clipboard=true` statt `content`.
-- Der Vault-Name wird einmal abgefragt (Einstellungen oder beim ersten Speichern).
-- Braucht einen Tipp des Nutzers: Ein anderes Programm zu öffnen und die Zwischenablage zu beschreiben, erlauben Browser nur nach einer Geste.
-- Erfolg kann die App nicht prüfen; sie merkt sich den Zeitpunkt der Übergabe.
-- Gemeinsamer Vault für Yunus und Calvin: Sync übernimmt Obsidian (z. B. Obsidian Sync mit geteiltem Vault). Die App braucht dafür nichts.
+Bei einem gleichen Dateinamen wird ein Suffix gewählt. Vorhandene, abweichende Inhalte werden niemals überschrieben. Identischer Inhalt gilt bei Wiederholung als bereits gespeichert.
 
 ### 4.6 Obsidian
 
@@ -350,15 +328,13 @@ Stand 2026-10-07: Code steht und ist im Browser mit simulierten Gemini-/GitHub-A
 
 ## 8. Einmaliges Setup (Schritt für Schritt)
 
-> Stand 2026-10-07: Für Nutzer reicht jetzt: App öffnen, zum Home-Bildschirm hinzufügen, Gemini-Key in den Einstellungen eintragen, Obsidian auf dem Gerät installiert haben. Die Schritte 2, 3 und 7 sind nur noch für die optionale GitHub-Sicherung nötig.
-
-1. **App-Repo:** Auf GitHub ein öffentliches Repo `mitschrift` anlegen. `CLAUDE.md` und `PLAN.md` hineinlegen.
-2. **Vault-Repo (jeder für sich):** Privates Repo `mitschrift-vault` anlegen, mit README initialisieren, damit der Branch `main` existiert.
-3. **GitHub-Token (jeder für sich):** Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token. Repository access: *Only select repositories* → `mitschrift-vault`. Permissions: *Contents* → *Read and write*.
-4. **Gemini-Key (jeder für sich):** Im Google AI Studio unter „Get API key“ einen Key erstellen.
-5. **GitHub Pages:** Im App-Repo Settings → Pages → Source: *GitHub Actions* (sobald der Workflow aus Phase 1 existiert).
-6. **App einrichten:** Pages-URL öffnen, zum Home-Bildschirm hinzufügen, in der installierten App die Einstellungen ausfüllen.
-7. **Obsidian am PC:** Vault-Repo klonen, Ordner als Vault öffnen, Plugin „Git“ für automatisches Pullen einrichten.
+1. App-Link öffnen und zum Home-Bildschirm hinzufügen.
+2. In der installierten App den eigenen Gemini-Key eintragen und prüfen.
+3. Yunus oder Calvin auswählen.
+4. Yunus: privates Repo `mitschrift-daten` erstellen, Token für dieses Repo mit Contents: Read and write anlegen und verbinden.
+5. Calvin: Einladung in Yunus' App scannen. Erst eine erfolgreiche Verbindungsprüfung speichert neue Zugangsdaten.
+6. Kurze Aufnahme machen, fertigstellen und den Verlauf bis zum gespeicherten Transkript prüfen.
+7. Optional am PC: Repo klonen und in Obsidian als Vault öffnen.
 
 Keys und Tokens gehören nie ins Repo, in Issues oder in Chat-Verläufe.
 
@@ -391,6 +367,8 @@ Getroffene Entscheidungen hier mit Datum eintragen.
 
 | Datum | Entscheidung |
 |---|---|
+| 2026-10-08 | Zweite Stabilisierung: Speicherprüfung testet Contents-Schreibzugriff mit einem festen, nicht im Branch referenzierten Blob; leere Repos werden mit `.mitschrift/README.md` initialisiert. Falsche Branches und Branch-Schutz werden nicht durch Schreiben auf dem Standardbranch umgangen. Engine B gibt ein fertiges Transkript nach spätestens 30 s ohne Titel zurück. Abbruchsignale erreichen Upload und Interactions-Anfragen. Eine unterbrochene Aufnahme muss vor einer neuen gesichert oder verworfen werden. 82 automatisierte Tests sowie Lint, TypeScript und PWA-Build erfolgreich; echte Handy-Aufnahme und Gemini-Zugang bleiben als Abnahmetest offen. |
+| 2026-10-07 | Stabilisierung: unabhängige Zeitgrenzen auch bei ignorierten Abbrüchen, einmalige normale Antwort bei ausgefallener Streaming-Verbindung, Verarbeitung anhalten ohne Audioverlust. Updates während Aufnahme und Verarbeitung gesperrt. Dateikonflikte überschreiben keine fremden Transkripte. Nachgeholte Uploads schließen Jobs ab. GitHub-Anfragen inklusive Antwortinhalt auf 30 s begrenzt. Neue Speicherverbindungen werden erst nach erfolgreicher Prüfung übernommen. |
 | 2026-10-07 | Spike-Seite wird für Phase 0 per eigenem Workflow (`spike-pages.yml`) auf GitHub Pages veröffentlicht, weil das Mikrofon auf dem Handy nur über HTTPS geht. In Phase 1 ersetzt `deploy.yml` diesen Workflow. |
 | 2026-10-07 | Phase 1 parallel zu den Phase-0-Tests begonnen. Engine A ist vorläufiger Default; Engine B ist eingebaut und holt den Titel mit einem zweiten Request vom Flash-Modell. |
 | 2026-10-07 | `deploy.yml` ersetzt `spike-pages.yml`: App unter der Pages-URL, Spike unter `<pages-url>/spike/`. |

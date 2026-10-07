@@ -110,8 +110,10 @@ function StorageCard() {
   const connect = useCallback(async (patch: Partial<Settings>) => {
     setBusy(true);
     setCheck(null);
-    saveSettings(patch);
-    const result = await testStorage(getSettings());
+    const candidate = { ...getSettings(), ...patch };
+    const result = await testStorage(candidate);
+    if (result.ok) saveSettings({ ...patch, storageVerified: true });
+    else if (!Object.keys(patch).length) saveSettings({ storageVerified: false });
     setCheck(result);
     setBusy(false);
     if (result.ok) {

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { db } from '../db/db';
 import type { Job, Step } from '../jobs/queue';
-import { discardJob, retryJob } from '../jobs/runner';
+import { discardJob, retryJob, stopJob } from '../jobs/runner';
 import { toUserMessage } from '../lib/errors';
 import { formatClock, localDate } from '../lib/time';
 import { hrefFor } from '../router';
@@ -77,6 +77,12 @@ function JobCard({ job, waitingReason }: { job: Job; waitingReason: string }) {
       {job.status === 'recorded' && <small>{waitingReason || 'Startet gleich …'}</small>}
       {job.status === 'uploading' && <small>Bitte die App geöffnet lassen, bis das Hochladen fertig ist.</small>}
       {job.status === 'transcribing' && <TranscribingInfo job={job} />}
+      {(job.status === 'uploading' || job.status === 'transcribing') && (
+        <button className="btn-small btn-ghost" disabled={busy} onClick={() => {
+          setBusy(true);
+          void stopJob(job.id).finally(() => setBusy(false));
+        }}>Verarbeitung anhalten (Audio behalten)</button>
+      )}
       {job.status === 'failed' && (
         <>
           <p className="error-text">{job.error}</p>

@@ -44,7 +44,7 @@ src/jobs/           Zustandsmaschine pro Aufnahme
 src/settings/       Einstellungen in localStorage
 src/db/             IndexedDB
 src/pages/          Record, History, Transcript, Settings
-spike/              Wegwerf-Code aus Phase 0, wird nicht deployt
+spike/              Wegwerf-Code aus Phase 0, wird unter /spike/ deployt
 ```
 
 Datenfluss: `recording` → Job in `jobs/queue.ts` → `transcription` → `vault/markdown.ts` → Tabelle `transcripts` in IndexedDB → `vault/vaultRepo.ts` (Repo). Historie: lokale `transcripts` + Repo-Liste (`remote`).

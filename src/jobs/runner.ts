@@ -1,7 +1,8 @@
 // Executes jobs step by step. Runs in the page; a job interrupted by closing the app resumes on the next start.
 
 import { db } from '../db/db';
-import { toUserMessage, UserError } from '../lib/errors';
+import { boundedRequest } from '../lib/request';
+import { toUserMessage, UserError, HttpError } from '../lib/errors';
 import { getSettings, missingSettings, storageConnected } from '../settings/settingsStore';
 import { createEngine } from '../transcription/createEngine';
 import type { AudioInput } from '../transcription/engine';
@@ -10,7 +11,7 @@ import { blobToBase64 } from '../lib/blob';
 import type { AudioSource, TranscriptMeta } from '../types';
 import { createTranscript, toMarkdown } from '../vault/markdown';
 import { parseTranscriptPath, transcriptPath } from '../vault/paths';
-import { clientFromSettings, saveTranscript } from '../vault/vaultRepo';
+import { clientFromSettings, saveTranscript, TranscriptCollisionError } from '../vault/vaultRepo';
 import {
   currentStep, isRunnable, newJob, retry, savingDone, stepFailed, stepStarted, transcriptionDone, uploadDone,
   type Job, type Step,
@@ -77,8 +78,20 @@ async function uniquePath(jobId: string, meta: Pick<TranscriptMeta, 'date' | 'ti
   for (let n = 1; ; n++) {
     const path = transcriptPath(meta.date, meta.time, meta.title, { user, suffix: n });
     const taken = await db.transcripts.where('path').equals(path).filter((t) => t.id !== jobId).count();
-    if (!taken) return path;
+    const remote = await db.remote.get(path);
+    if (!taken && !remote) return path;
   }
+}
+
+const active = new Map<string, { controller: AbortController; done: Promise<void> }>();
+export function processingActive(): boolean { return running; }
+
+/** Stops a stuck operation without deleting its recording, then permits a safe retry. */
+export async function stopJob(id: string): Promise<void> {
+  const operation = active.get(id);
+  if (!operation) return;
+  operation.controller.abort(new UserError('Verarbeitung angehalten. Die Aufnahme bleibt gespeichert. Bitte „Erneut versuchen“.'));
+  await operation.done;
 }
 
 let running = false;
@@ -93,7 +106,7 @@ export function kickRunner(): void {
   }
   running = true;
   kickedWhileRunning = false;
-  void runAll().finally(() => {
+  void runAll().catch(() => { console.warn('Job queue could not continue; local recordings are retained.'); }).finally(() => {
     running = false;
     if (kickedWhileRunning) kickRunner();
   });
@@ -114,10 +127,27 @@ async function runAll(): Promise<void> {
 
 /** Writes a transcript to the shared storage and records that it is there. */
 async function uploadTranscript(id: string, path: string, markdown: string, title: string): Promise<void> {
-  const sha = await saveTranscript(clientFromSettings(getSettings()), path, markdown, title);
+  const client = clientFromSettings(getSettings());
+  const originalPath = path;
+  let sha = '';
+  for (let suffix = 2; ; suffix++) {
+    if (suffix > 100) throw new UserError('Zu viele Dateikonflikte im Speicher. Bitte erneut versuchen.');
+    if (path !== originalPath && await db.transcripts.where('path').equals(path).filter((t) => t.id !== id).count()) {
+      path = originalPath.replace(/(?: \(\d+\))?\.md$/, ` (${suffix}).md`);
+      continue;
+    }
+    try {
+      sha = await saveTranscript(client, path, markdown, title);
+      break;
+    } catch (e) {
+      if (!(e instanceof TranscriptCollisionError) && !(e instanceof HttpError && e.status === 409)) throw e;
+      path = originalPath.replace(/(?: \(\d+\))?\.md$/, ` (${suffix}).md`);
+    }
+  }
   const info = parseTranscriptPath(path);
-  await db.transaction('rw', [db.transcripts, db.remote, db.remoteFiles], async () => {
-    await db.transcripts.update(id, { githubPath: path });
+  await db.transaction('rw', [db.transcripts, db.remote, db.remoteFiles, db.jobs], async () => {
+    await db.transcripts.update(id, { githubPath: path, path });
+    await db.jobs.update(id, { ...savingDone(path, Date.now()), error: undefined, failedStep: undefined });
     if (info) await db.remote.put({ ...info, sha });
     await db.remoteFiles.put({ path, sha, text: markdown });
   });
@@ -130,35 +160,46 @@ async function uploadPendingTranscripts(): Promise<void> {
   for (const t of pending) {
     try {
       await uploadTranscript(t.id, t.path, t.markdown, t.title);
-    } catch (e) {
-      console.warn(`Upload of ${t.path} failed; will retry later`, e);
+      const job = await db.jobs.get(t.id);
+      if (job?.upload?.name) await deleteUpload(createGeminiClient(getSettings().geminiKey), job.upload.name);
+    } catch {
+      console.warn('Transcript upload failed; local copy retained.');
       return;
     }
   }
 }
 
 async function runJob(id: string): Promise<void> {
-  const settings = getSettings();
-  const ai = createGeminiClient(settings.geminiKey);
-  for (;;) {
-    const job = await db.jobs.get(id);
-    if (!job || !isRunnable(job)) return;
-    const step = currentStep(job, Date.now());
-    if (!step) return;
-    await db.jobs.update(id, stepStarted(step, Date.now()));
-    try {
-      await runStep(step, job, settings, ai);
-    } catch (e) {
-      console.error(`Job ${id} failed at ${step}`, e);
-      const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
-      if (step === 'transcribing') patch.progressChars = undefined;
-      await db.jobs.update(id, patch);
-      return;
+  const controller = new AbortController();
+  let finish: () => void = () => {};
+  const done = new Promise<void>((resolve) => { finish = resolve; });
+  active.set(id, { controller, done });
+  try {
+    const settings = getSettings();
+    const ai = createGeminiClient(settings.geminiKey);
+    for (;;) {
+      const job = await db.jobs.get(id);
+      if (!job || !isRunnable(job)) return;
+      const step = currentStep(job, Date.now());
+      if (!step) return;
+      await db.jobs.update(id, stepStarted(step, Date.now()));
+      try {
+        await runStep(step, job, settings, ai, controller.signal);
+      } catch (e) {
+        console.warn(`Job failed at ${step}; audio retained.`);
+        const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
+        if (step === 'transcribing') patch.progressChars = undefined;
+        await db.jobs.update(id, patch);
+        return;
+      }
     }
+  } finally {
+    active.delete(id);
+    finish();
   }
 }
 
-async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSettings>, ai: ReturnType<typeof createGeminiClient>) {
+async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSettings>, ai: ReturnType<typeof createGeminiClient>, signal: AbortSignal) {
   switch (step) {
     case 'uploading': {
       const audio = await db.audio.get(job.id);
@@ -167,31 +208,34 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       const upload =
         audio.blob.size <= INLINE_MAX_BYTES
           ? { name: '', uri: '', mimeType: geminiMimeType(job.mimeType), uploadedAt: Date.now(), inline: true }
-          : await uploadAudio(ai, audio.blob, job.mimeType);
+          : await uploadAudio(ai, audio.blob, job.mimeType, signal);
       await db.jobs.update(job.id, uploadDone(upload, Date.now()));
       return;
     }
     case 'transcribing': {
       const engine = createEngine(ai, settings);
       let input: AudioInput = { uri: job.upload!.uri, mimeType: job.upload!.mimeType };
-      if (job.upload!.inline) {
-        const audio = await db.audio.get(job.id);
+      const audio = await db.audio.get(job.id);
+      // Also upgrade jobs that were already uploaded by an older app version.
+      if (job.upload!.inline || (audio && audio.blob.size <= INLINE_MAX_BYTES)) {
         if (!audio) throw new UserError('Die Audiodatei ist auf diesem Gerät nicht mehr vorhanden.');
         input = { data: await blobToBase64(audio.blob), mimeType: job.upload!.mimeType };
       }
       let lastWrite = 0;
-      const result = await engine.transcribe(
+      const result = await boundedRequest((operationSignal) => engine.transcribe(
         input,
         { speakerCount: job.speakerCount, glossary: [], removeFillers: settings.removeFillers },
         {
+          signal: operationSignal,
+          firstChunkMs: Math.min(300000, Math.max(90000, job.durationSec * 1000)),
           // Progress for the job card, written at most once a second.
           onProgress: (chars) => {
-            if (Date.now() - lastWrite < 1000) return;
+            if (operationSignal.aborted || Date.now() - lastWrite < 1000) return;
             lastWrite = Date.now();
-            void db.jobs.update(job.id, { progressChars: chars });
+            void db.jobs.update(job.id, { progressChars: chars }).catch(() => {});
           },
         },
-      );
+      ), 20 * 60 * 1000, 'Die Transkription dauert zu lange. Die Aufnahme bleibt gespeichert. Bitte erneut versuchen.', signal);
       await db.jobs.update(job.id, transcriptionDone(result, engine.model, Date.now()));
       return;
     }
@@ -205,7 +249,7 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       });
       const { meta } = transcript;
       const markdown = toMarkdown(transcript);
-      // The path stays fixed across retries, so a second upload overwrites instead of duplicating.
+      // Keep the path across retries; identical content confirms a previous successful upload.
       const path = job.vaultPath ?? (await uniquePath(job.id, meta, settings.userName));
       const existing = await db.transcripts.get(job.id);
       await db.transaction('rw', [db.jobs, db.transcripts], async () => {
@@ -224,7 +268,6 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
         await db.jobs.update(job.id, { vaultPath: path });
       });
       await uploadTranscript(job.id, path, markdown, meta.title);
-      await db.jobs.update(job.id, savingDone(path, Date.now()));
       // The transcript is safe on the device; the copy at Google is no longer needed (CLAUDE.md rule 8).
       if (job.upload?.name) await deleteUpload(ai, job.upload.name);
       return;

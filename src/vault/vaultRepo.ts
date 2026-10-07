@@ -1,5 +1,6 @@
 // The shared storage: a private GitHub repo with one Markdown file per transcript (format: PLAN.md 4.3).
 
+import { UserError } from '../lib/errors';
 import type { Settings } from '../settings/settingsStore';
 import { GithubClient, type RepoFile } from './githubClient';
 import { parseTranscriptPath, type TranscriptFileInfo } from './paths';
@@ -27,8 +28,14 @@ export function readTranscript(client: GithubClient, path: string): Promise<Repo
   return client.getFile(path);
 }
 
-/** Writes the transcript, overwriting our own earlier copy at the same path. Returns the new sha. */
+/** Creates a transcript or confirms an identical earlier upload; never overwrites different content. */
 export async function saveTranscript(client: GithubClient, path: string, markdown: string, title: string): Promise<string> {
   const existing = await client.getFile(path);
-  return client.putFile(path, markdown, `Add transcript: ${title}`, existing?.sha);
+  if (existing) {
+    if (existing.text === markdown) return existing.sha;
+    throw new TranscriptCollisionError('Unter diesem Dateinamen liegt bereits ein anderes Transkript.');
+  }
+  return client.putFile(path, markdown, `Add transcript: ${title}`);
 }
+
+export class TranscriptCollisionError extends UserError {}

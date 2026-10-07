@@ -3,6 +3,7 @@
 
 import { db } from '../db/db';
 import { enqueueAudio } from '../jobs/runner';
+import { UserError } from '../lib/errors';
 
 const CHUNK_MS = 5000;
 
@@ -23,6 +24,7 @@ export class Recorder {
   private startedAt = 0;
   private accumulatedMs = 0;
   private runningSince = 0;
+  private clockRunning = false;
   private pendingWrites: Promise<unknown>[] = [];
   private speakerCount?: number;
   private audioContext: AudioContext | null = null;
@@ -38,12 +40,12 @@ export class Recorder {
   }
 
   get elapsedSec(): number {
-    const running = this.state === 'recording' ? performance.now() - this.runningSince : 0;
+    const running = this.clockRunning ? performance.now() - this.runningSince : 0;
     return (this.accumulatedMs + running) / 1000;
   }
 
   get activeSessionId(): string | undefined {
-    return this.state === 'idle' ? undefined : this.sessionId;
+    return this.stream === null ? undefined : this.sessionId;
   }
 
   /** Current input loudness, 0..1, for the level meter. */
@@ -60,14 +62,25 @@ export class Recorder {
   }
 
   async start(speakerCount?: number): Promise<void> {
+    if (this.stream) throw new UserError('Bitte die bisherige Aufnahme zuerst speichern oder verwerfen.');
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     // No mimeType option: the browser picks what it supports (iOS: audio/mp4, Chrome: audio/webm).
-    this.media = new MediaRecorder(this.stream);
+    try {
+      this.media = new MediaRecorder(this.stream);
+    } catch (e) {
+      this.cleanup();
+      throw e;
+    }
     this.sessionId = crypto.randomUUID();
     this.seq = 0;
     this.startedAt = Date.now();
     this.accumulatedMs = 0;
     this.runningSince = performance.now();
+    this.clockRunning = true;
+    this.media.addEventListener('stop', () => {
+      if (this.clockRunning) this.accumulatedMs += performance.now() - this.runningSince;
+      this.clockRunning = false;
+    }, { once: true });
     this.speakerCount = speakerCount;
     this.gaps = [];
     this.hiddenSince = null;
@@ -84,7 +97,13 @@ export class Recorder {
         }),
       );
     };
-    this.media.start(CHUNK_MS);
+    try {
+      this.media.start(CHUNK_MS);
+    } catch (e) {
+      this.clockRunning = false;
+      this.cleanup();
+      throw e;
+    }
     this.startLevelMeter(this.stream);
     await this.acquireWakeLock();
     document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -94,12 +113,14 @@ export class Recorder {
     if (this.state !== 'recording') return;
     this.media!.pause();
     this.accumulatedMs += performance.now() - this.runningSince;
+    this.clockRunning = false;
   }
 
   resume(): void {
     if (this.state !== 'paused') return;
     this.media!.resume();
     this.runningSince = performance.now();
+    this.clockRunning = true;
   }
 
   /** Stops, stores the recording as a job and returns the job id. */

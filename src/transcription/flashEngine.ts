@@ -16,6 +16,8 @@ export class FlashEngine implements TranscriptionEngine {
   async transcribe(audio: AudioInput, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
     const text = await streamText(this.ai, this.model, buildTranscriptionPrompt(options), audio, {
       jsonSchema: TRANSCRIPT_SCHEMA,
+      signal: context.signal,
+      firstChunkMs: context.firstChunkMs,
       onProgress: context.onProgress,
     });
     let parsed: unknown;

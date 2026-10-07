@@ -3,8 +3,9 @@
 
 import type { GoogleGenAI } from '@google/genai';
 import { formatClock } from '../lib/time';
+import { boundedRequest } from '../lib/request';
 import type { Segment, TranscriptResult } from '../types';
-import type { AudioInput, TranscribeOptions, TranscriptionEngine } from './engine';
+import type { AudioInput, TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
 import { geminiCall, outputText, textContents } from './gemini';
 import { buildTitlePrompt } from './prompt';
 import { validateTranscriptResult } from './schema';
@@ -57,18 +58,18 @@ export class TranscribeEngine implements TranscriptionEngine {
   ) {}
 
   // Speaker count and filler removal are not configurable for this model.
-  async transcribe(audio: AudioInput, _options: TranscribeOptions): Promise<TranscriptResult> {
+  async transcribe(audio: AudioInput, _options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
     // Diarization and custom vocabulary cannot be combined (PLAN.md 3.2); speakers win.
     // The transcription config only exists in the Interactions API.
-    const res = await geminiCall(() =>
+    const res = await boundedRequest((signal) => geminiCall(() =>
       this.ai.interactions.create({
         model: this.model,
         input: [{ type: 'audio', ...('data' in audio ? { data: audio.data } : { uri: audio.uri }), mime_type: audio.mimeType }],
         generation_config: {
           transcription_config: { mode: { type: 'verbatim', diarization_mode: 'speaker', timestamp_granularities: ['word'] } },
         },
-      }),
-    );
+      }, { signal }),
+    ), 15 * 60 * 1000, 'Die Transkription dauert zu lange. Bitte erneut versuchen.', context.signal);
     const words = textContents(res).flatMap((c) =>
       (c.annotations ?? []).filter((a) => a.type === 'word_info').map((a) => a as WordInfo),
     );
@@ -77,13 +78,14 @@ export class TranscribeEngine implements TranscriptionEngine {
       : { speakers: ['S1'], segments: [{ speaker: 'S1', start: '00:00', text: outputText(res) }] };
 
     const excerpt = segments.map((s) => s.text).join(' ').slice(0, TITLE_EXCERPT_CHARS);
-    const { title, language } = await this.titleFor(excerpt);
+    context.onProgress?.(segments.reduce((total, segment) => total + segment.text.length, 0));
+    const { title, language } = await this.titleFor(excerpt, context.signal);
     return validateTranscriptResult({ title, language, speakers, segments });
   }
 
-  private async titleFor(excerpt: string): Promise<{ title: string; language: string }> {
+  private async titleFor(excerpt: string, signal?: AbortSignal): Promise<{ title: string; language: string }> {
     try {
-      const res = await geminiCall(() =>
+      const res = await boundedRequest((requestSignal) => geminiCall(() =>
         this.ai.interactions.create({
           model: this.titleModel,
           input: buildTitlePrompt(excerpt),
@@ -92,13 +94,14 @@ export class TranscribeEngine implements TranscriptionEngine {
             mime_type: 'application/json',
             schema: { type: 'object', properties: { title: { type: 'string' }, language: { type: 'string' } }, required: ['title', 'language'] },
           },
-        }),
-      );
+        }, { signal: requestSignal }),
+      ), 30000, 'Der Titel konnte nicht rechtzeitig erzeugt werden.', signal);
       const parsed = JSON.parse(outputText(res)) as { title?: string; language?: string };
-      return { title: parsed.title ?? '', language: parsed.language ?? '' };
-    } catch (e) {
+      return { title: typeof parsed.title === 'string' ? parsed.title : '', language: typeof parsed.language === 'string' ? parsed.language : '' };
+    } catch {
+      signal?.throwIfAborted();
       // A missing title must not cost the transcript.
-      console.warn('Title request failed', e);
+      console.warn('Title request failed; transcript retained.');
       return { title: '', language: '' };
     }
   }

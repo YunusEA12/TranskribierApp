@@ -12,6 +12,7 @@ export interface Settings {
   // Shared storage: a private GitHub repo both phones write to. Yunus creates the token; Calvin gets
   // repo and token by scanning an invite QR code in Yunus' app.
   githubToken: string;
+  storageVerified: boolean;
   vaultRepo: string; // "owner/repo"
   vaultBranch: string;
   engine: EngineId;
@@ -26,6 +27,7 @@ export const DEFAULT_SETTINGS: Settings = {
   userName: '',
   geminiKey: '',
   githubToken: '',
+  storageVerified: false,
   vaultRepo: 'YunusEA12/mitschrift-daten',
   vaultBranch: 'main',
   engine: 'flash',
@@ -43,11 +45,19 @@ export function getSettings(): Settings {
   if (cached) return cached;
   let stored: Partial<Settings> = {};
   try {
-    stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<Settings>;
+    const raw: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      stored = Object.fromEntries(Object.entries(DEFAULT_SETTINGS).flatMap(([key, value]) => {
+        const candidate = (raw as Record<string, unknown>)[key];
+        return typeof candidate === typeof value ? [[key, candidate]] : [];
+      })) as Partial<Settings>;
+    }
   } catch {
     // Corrupt or unavailable storage: fall back to defaults.
   }
   cached = { ...DEFAULT_SETTINGS, ...stored };
+  // Existing installations keep working; new connections must pass the access check.
+  cached.storageVerified = stored.storageVerified ?? Boolean(stored.githubToken);
   if (!cached.vaultRepo.trim()) cached.vaultRepo = DEFAULT_SETTINGS.vaultRepo;
   if (!cached.vaultBranch.trim()) cached.vaultBranch = DEFAULT_SETTINGS.vaultBranch;
   // "-agent" variants cannot take audio; an earlier suggestion could have picked one.
@@ -57,7 +67,9 @@ export function getSettings(): Settings {
 }
 
 export function saveSettings(patch: Partial<Settings>): Settings {
-  cached = { ...getSettings(), ...patch };
+  const current = getSettings();
+  const changed = ['githubToken', 'vaultRepo', 'vaultBranch'].some((key) => key in patch && patch[key as keyof Settings] !== current[key as keyof Settings]);
+  cached = { ...current, ...(changed ? { storageVerified: false } : {}), ...patch };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cached));
   listeners.forEach((l) => l());
   return cached;
@@ -80,7 +92,7 @@ export const MISSING_STORAGE = 'Gemeinsamer Speicher';
 export const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
 export function storageConnected(s: Settings): boolean {
-  return Boolean(s.githubToken.trim() && REPO_RE.test(s.vaultRepo.trim()));
+  return Boolean(s.storageVerified && s.githubToken.trim() && REPO_RE.test(s.vaultRepo.trim()));
 }
 
 /** What is still missing before recordings are processed: key, who records (decides the folder), and the shared storage. */
