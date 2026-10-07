@@ -1,0 +1,164 @@
+// Executes jobs step by step. Runs in the page; a job interrupted by closing the app resumes on the next start.
+
+import { db } from '../db/db';
+import { toUserMessage, UserError } from '../lib/errors';
+import { getSettings, missingSettings } from '../settings/settingsStore';
+import { createEngine } from '../transcription/createEngine';
+import { createGeminiClient, deleteUpload, uploadAudio } from '../transcription/gemini';
+import type { AudioSource } from '../types';
+import { createTranscript, toMarkdown } from '../vault/markdown';
+import { chooseNewPath, clientFromSettings, writeTranscript } from '../vault/vaultRepo';
+import {
+  currentStep, isRunnable, newJob, retry, savingDone, stepFailed, stepStarted, transcriptionDone, uploadDone,
+  type Job, type Step,
+} from './queue';
+
+export interface NewAudio {
+  blob: Blob;
+  mimeType: string;
+  source: AudioSource;
+  recordedAt: number;
+  durationSec: number;
+  fileName?: string;
+  speakerCount?: number;
+}
+
+/** Stores the audio and its job in one transaction, then starts processing. */
+export async function enqueueAudio(audio: NewAudio, extraWrites?: () => Promise<unknown>): Promise<string> {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  await db.transaction('rw', [db.audio, db.jobs, db.chunks], async () => {
+    await db.audio.add({ id, blob: audio.blob, mimeType: audio.mimeType, createdAt: now });
+    await db.jobs.add(
+      newJob(
+        {
+          id,
+          recordedAt: audio.recordedAt,
+          source: audio.source,
+          mimeType: audio.mimeType,
+          durationSec: audio.durationSec,
+          fileName: audio.fileName,
+          speakerCount: audio.speakerCount,
+        },
+        now,
+      ),
+    );
+    await extraWrites?.();
+  });
+  kickRunner();
+  return id;
+}
+
+export async function retryJob(id: string): Promise<void> {
+  const job = await db.jobs.get(id);
+  if (!job) return;
+  await db.jobs.update(id, retry(job, Date.now()));
+  kickRunner();
+}
+
+/** Removes a job and its local audio, and the upload at Gemini if there is one. */
+export async function discardJob(id: string): Promise<void> {
+  const job = await db.jobs.get(id);
+  if (job?.upload && getSettings().geminiKey) await deleteUpload(createGeminiClient(getSettings().geminiKey), job.upload.name);
+  await db.transaction('rw', [db.jobs, db.audio], async () => {
+    await db.jobs.delete(id);
+    await db.audio.delete(id);
+  });
+}
+
+let running = false;
+let kickedWhileRunning = false;
+
+/** Processes all runnable jobs, oldest first. Safe to call any time. */
+export function kickRunner(): void {
+  if (running) {
+    // A job may have been added after the loop last looked; go around once more when done.
+    kickedWhileRunning = true;
+    return;
+  }
+  running = true;
+  kickedWhileRunning = false;
+  void runAll().finally(() => {
+    running = false;
+    if (kickedWhileRunning) kickRunner();
+  });
+}
+
+async function runAll(): Promise<void> {
+  const attempted = new Set<string>();
+  for (;;) {
+    if (missingSettings(getSettings()).length || !navigator.onLine) return;
+    const jobs = await db.jobs.orderBy('recordedAt').filter((j) => isRunnable(j) && !attempted.has(j.id)).toArray();
+    const job = jobs[0];
+    if (!job) return;
+    attempted.add(job.id);
+    await runJob(job.id);
+  }
+}
+
+async function runJob(id: string): Promise<void> {
+  const settings = getSettings();
+  const ai = createGeminiClient(settings.geminiKey);
+  for (;;) {
+    const job = await db.jobs.get(id);
+    if (!job || !isRunnable(job)) return;
+    const step = currentStep(job, Date.now());
+    if (!step) return;
+    await db.jobs.update(id, stepStarted(step, Date.now()));
+    try {
+      await runStep(step, job, settings, ai);
+    } catch (e) {
+      console.error(`Job ${id} failed at ${step}`, e);
+      await db.jobs.update(id, stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now()));
+      return;
+    }
+  }
+}
+
+async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSettings>, ai: ReturnType<typeof createGeminiClient>) {
+  switch (step) {
+    case 'uploading': {
+      const audio = await db.audio.get(job.id);
+      if (!audio) throw new UserError('Die Audiodatei ist auf diesem Gerät nicht mehr vorhanden.');
+      const upload = await uploadAudio(ai, audio.blob, job.mimeType);
+      await db.jobs.update(job.id, uploadDone(upload, Date.now()));
+      return;
+    }
+    case 'transcribing': {
+      const engine = createEngine(ai, settings);
+      const result = await engine.transcribe(job.upload!, {
+        speakerCount: job.speakerCount,
+        glossary: [],
+        removeFillers: settings.removeFillers,
+      });
+      await db.jobs.update(job.id, transcriptionDone(result, engine.model, Date.now()));
+      return;
+    }
+    case 'saving': {
+      const client = clientFromSettings(settings);
+      const transcript = createTranscript(job.result!, {
+        recordedAt: new Date(job.recordedAt),
+        durationSec: job.durationSec,
+        user: settings.userName,
+        model: job.model ?? '',
+        source: job.source,
+      });
+      // Reserve the path first so a retry overwrites our own file instead of creating a duplicate.
+      let path = job.vaultPath;
+      if (!path) {
+        path = await chooseNewPath(client, settings.vaultBaseDir, transcript.meta);
+        await db.jobs.update(job.id, { vaultPath: path });
+      }
+      const markdown = toMarkdown(transcript);
+      const sha = await writeTranscript(client, path, markdown, `Add transcript: ${transcript.meta.title}`);
+      await db.transaction('rw', [db.jobs, db.files, db.history], async () => {
+        await db.files.put({ path: path!, sha, text: markdown });
+        await db.history.put({ path: path!, sha, date: transcript.meta.date, time: transcript.meta.time, title: transcript.meta.title });
+        await db.jobs.update(job.id, savingDone(path!, Date.now()));
+      });
+      // The transcript is safe in the vault; the copy at Google is no longer needed (CLAUDE.md rule 8).
+      if (job.upload) await deleteUpload(ai, job.upload.name);
+      return;
+    }
+  }
+}

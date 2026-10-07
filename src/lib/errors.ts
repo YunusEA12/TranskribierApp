@@ -1,0 +1,61 @@
+// Errors shown to the user are short German sentences. Everything else is mapped here.
+
+/** An error whose message is already meant for the user. */
+export class UserError extends Error {}
+
+export class HttpError extends Error {
+  constructor(
+    readonly service: 'github' | 'gemini',
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function statusOf(e: unknown): number | undefined {
+  if (e instanceof HttpError) return e.status;
+  const s = (e as { status?: unknown } | null)?.status;
+  return typeof s === 'number' ? s : undefined;
+}
+
+function isNetworkError(e: unknown): boolean {
+  return e instanceof TypeError && /fetch|network|load failed/i.test(e.message);
+}
+
+export function toUserMessage(e: unknown, service?: 'github' | 'gemini'): string {
+  if (e instanceof UserError) return e.message;
+  if (isNetworkError(e)) return 'Keine Verbindung zum Server. Bitte Internetverbindung prüfen.';
+  const svc = e instanceof HttpError ? e.service : service;
+  const status = statusOf(e);
+
+  if (svc === 'github') {
+    switch (status) {
+      case 401:
+        return 'GitHub lehnt den Token ab. Bitte Token in den Einstellungen prüfen.';
+      case 403:
+        return 'Der GitHub-Token darf das Vault-Repo nicht beschreiben (Contents: Read and write nötig) oder das API-Limit ist erreicht.';
+      case 404:
+        return 'Vault-Repo oder Branch nicht gefunden. Bitte owner/repo, Branch und Token-Zugriff prüfen.';
+      case 409:
+      case 422:
+        return 'Die Datei im Vault wurde gleichzeitig geändert. Bitte erneut versuchen.';
+    }
+  }
+  if (svc === 'gemini') {
+    switch (status) {
+      case 400:
+        return 'Gemini hat die Anfrage abgelehnt (Format oder Modell-ID). Details im Fehlerprotokoll.';
+      case 401:
+      case 403:
+        return 'Gemini lehnt den API-Key ab. Bitte Key in den Einstellungen prüfen.';
+      case 404:
+        return 'Das Gemini-Modell wurde nicht gefunden. Bitte Modell-ID in den Einstellungen prüfen.';
+      case 429:
+        return 'Gemini-Kontingent erschöpft. Später erneut versuchen.';
+    }
+  }
+  if (status !== undefined && status >= 500) return 'Der Server hat einen Fehler gemeldet. Bitte später erneut versuchen.';
+  const detail = e instanceof Error ? e.message : String(e);
+  return `Unerwarteter Fehler: ${detail}`;
+}
