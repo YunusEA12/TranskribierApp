@@ -156,8 +156,11 @@ Die Modell-ID ist eine Einstellung, keine Konstante im Code – die Modellnamen 
 ```
 mitschrift-vault/
 ├── Transkripte/
-│   └── 2026/
-│       └── 2026-10-07 0841 Projektplanung Transkript-App.md
+│   ├── Yunus/
+│   │   └── 2026/
+│   │       └── 2026-10-07 0841 Projektplanung Transkript-App.md
+│   └── Calvin/
+│       └── 2026/
 ├── _mitschrift/
 │   └── glossar.md          # ein Begriff pro Zeile, wird in den Prompt gegeben
 └── README.md
@@ -165,7 +168,7 @@ mitschrift-vault/
 
 ### 4.2 Dateiname
 
-`YYYY-MM-DD HHmm <Titel>.md` – Datum und Titel stecken im Namen. Dadurch braucht die Historie nur einen einzigen API-Aufruf (Dateiliste) und muss keine Dateien öffnen. Im Titel verbotene Zeichen (`/ \ : * ? " < > | # ^ [ ]`) werden entfernt.
+`Transkripte/<Name>/<Jahr>/YYYY-MM-DD HHmm <Titel>.md` – ein Ordner pro Person (Name aus „Wer nimmt auf?“; ohne Namen entfällt die Ebene). Datum und Titel stecken im Namen. Dadurch braucht die Historie nur einen einzigen API-Aufruf (Dateiliste) und muss keine Dateien öffnen. Im Titel verbotene Zeichen (`/ \ : * ? " < > | # ^ [ ]`) werden entfernt.
 
 ### 4.3 Dateiformat
 
@@ -211,7 +214,7 @@ GitHub dokumentiert als Einschränkung, dass fine-grained Tokens nicht für Repo
 
 ### 4.7 Übergabe an Obsidian (Standard)
 
-- Nach der Transkription liegt die Notiz in der App (IndexedDB). „In Obsidian speichern“ öffnet `obsidian://new?vault=<Name>&file=Transkripte/<Jahr>/<Dateiname>&overwrite=true&content=<Markdown>`.
+- Nach der Transkription liegt die Notiz in der App (IndexedDB). „In Obsidian speichern“ öffnet `obsidian://new?vault=<Vault>&file=Transkripte/<Name>/<Jahr>/<Dateiname>&overwrite=true&content=<Markdown>`.
 - Lange Transkripte (URI über 30 000 Zeichen) gehen über die Zwischenablage: `&clipboard=true` statt `content`.
 - Der Vault-Name wird einmal abgefragt (Einstellungen oder beim ersten Speichern).
 - Braucht einen Tipp des Nutzers: Ein anderes Programm zu öffnen und die Zwischenablage zu beschreiben, erlauben Browser nur nach einer Geste.
@@ -394,6 +397,7 @@ Getroffene Entscheidungen hier mit Datum eintragen.
 | 2026-10-07 | Jeder nutzt seinen eigenen Gemini-Key und Token, eingetragen in den Einstellungen der App (nur lokal gespeichert, kein Login). Bestätigt Entscheidung 2 (getrennte Vault-Repos). |
 | 2026-10-07 | **Nur noch der API-Key ist Pflicht.** Wunsch der Nutzer: kein GitHub. Transkripte liegen in der App (IndexedDB) und werden per `obsidian://new` an Obsidian übergeben (4.7). GitHub bleibt als optionale Sicherung unter „Weitere Einstellungen“. Die Historie kommt nicht mehr aus dem Repo, sondern aus der App. Das Markdown-Format (4.3) bleibt unverändert. |
 | 2026-10-07 | Gemeinsamer Vault („unser Vault“) ist möglich: Die App braucht nur den Vault-Namen; synchronisiert wird über Obsidian selbst. Ersetzt Entscheidung 2. |
+| 2026-10-07 | Ein gemeinsamer, synchronisierter Vault, aber getrennte Ordner: Notizen landen unter `Transkripte/<Name>/<Jahr>/`. Der Name kommt aus „Wer nimmt auf?“ und bleibt optional (ohne Namen: `Transkripte/<Jahr>/`). Frontmatter und Zeilenformat (4.3) unverändert. |
 | 2026-10-07 | Optik: Nutzer wünschen ein schöneres Design. Regel 11 („Funktion vor Optik“) gilt damit nicht mehr absolut. Neues UI mit Tab-Leiste, Rekorder mit Pegelanzeige, Karten im Verlauf, Sprecherfarben. Systemschriften, keine externen Fonts (offline). |
 
 ---

@@ -12,9 +12,9 @@ Nur ein Schritt ist Pflicht: der eigene **Gemini-API-Key**.
 
 1. App-Link auf dem Handy öffnen und zum Home-Bildschirm hinzufügen (iPhone: Safari → Teilen → „Zum Home-Bildschirm“; Android: Chrome-Menü → „App installieren“).
 2. In der App vom Home-Bildschirm: **Einstellungen** → Key holen über den Link (aistudio.google.com/apikey → „Create API key“) → einfügen → **Key prüfen**.
-3. Optional: unter „Wer nimmt auf?“ den eigenen Namen antippen.
+3. Unter „Wer nimmt auf?“ den eigenen Namen antippen. Davon hängt der eigene Ordner im Vault ab.
 
-**Obsidian:** Die Obsidian-App muss auf dem Gerät installiert sein. Beim ersten „In Obsidian speichern“ fragt die App einmal nach dem Namen des Vaults. Die Notiz landet im Vault unter `Transkripte/<Jahr>/`.
+**Obsidian:** Die Obsidian-App muss auf dem Gerät installiert sein. Beim ersten „In Obsidian speichern“ fragt die App einmal nach dem Namen des Vaults. Die Notiz landet im Vault unter `Transkripte/<Name>/<Jahr>/`, also jeder in seinem eigenen Ordner.
 
 **Gemeinsamer Vault:** Wenn Yunus und Calvin in denselben Vault speichern wollen, muss Obsidian diesen Vault zwischen ihren Geräten synchronisieren, z. B. mit Obsidian Sync (geteilter Vault). Die App braucht dafür nur den Vault-Namen.
 
