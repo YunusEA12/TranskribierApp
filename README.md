@@ -1,32 +1,35 @@
 # TranskribierApp („Mitschrift“)
 
-Eine Transkribier-App für Calvin und Yunus: aufnehmen oder Audiodatei importieren → mit Gemini transkribieren (Sprecher, Zeitstempel, Titel) → als Markdown ins eigene Obsidian-Vault-Repo auf GitHub.
+Eine Transkribier-App für Calvin und Yunus: aufnehmen oder Audiodatei importieren → mit Gemini transkribieren (Sprecher, Zeitstempel, Titel) → als Notiz in Obsidian speichern.
 
 - App: https://yunusea12.github.io/TranskribierApp/
 - Spike (Phase 0): https://yunusea12.github.io/TranskribierApp/spike/
 - Plan und Begründungen: [`PLAN.md`](PLAN.md) · Regeln für die Entwicklung: [`CLAUDE.md`](CLAUDE.md)
 
-## Einrichten (jeder für sich)
+## Einrichten
 
-1. Privates GitHub-Repo `mitschrift-vault` anlegen, mit README (damit `main` existiert).
-2. Fine-grained Token: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens. *Only select repositories* → `mitschrift-vault`, *Contents* → *Read and write*.
-3. Gemini-API-Key im Google AI Studio („Get API key“).
-4. App-Link auf dem Handy öffnen → „Zum Home-Bildschirm“ (iPhone: Teilen-Menü in Safari; Android: Chrome-Menü → „App installieren“).
-5. **In der installierten App** unter „Einstellungen“ Name, Key, Token und `owner/mitschrift-vault` eintragen, „Verbindung testen“.
+Nur ein Schritt ist Pflicht: der eigene **Gemini-API-Key**.
 
-Keys und Tokens bleiben nur auf dem Gerät. Nie in Chats, Issues oder ins Repo schreiben.
+1. App-Link auf dem Handy öffnen und zum Home-Bildschirm hinzufügen (iPhone: Safari → Teilen → „Zum Home-Bildschirm“; Android: Chrome-Menü → „App installieren“).
+2. In der App vom Home-Bildschirm: **Einstellungen** → Key holen über den Link (aistudio.google.com/apikey → „Create API key“) → einfügen → **Key prüfen**.
+3. Optional: unter „Wer nimmt auf?“ den eigenen Namen antippen.
 
-**Ersatzmodell:** Im kostenlosen Kontingent hat jedes Modell ein Tageslimit. Unter „Einstellungen → Ersatzmodell“ kann ein schwächeres Modell (z. B. ein „flash-lite“) gewählt werden, das einspringt, wenn das Limit des Hauptmodells erreicht ist. Nach „Verbindung testen“ schlägt das Feld die Modelle vor, die der eigene Key nutzen darf.
+**Obsidian:** Die Obsidian-App muss auf dem Gerät installiert sein. Beim ersten „In Obsidian speichern“ fragt die App einmal nach dem Namen des Vaults. Die Notiz landet im Vault unter `Transkripte/<Jahr>/`.
 
-## Handy-Test für Phase 1
+**Gemeinsamer Vault:** Wenn Yunus und Calvin in denselben Vault speichern wollen, muss Obsidian diesen Vault zwischen ihren Geräten synchronisieren, z. B. mit Obsidian Sync (geteilter Vault). Die App braucht dafür nur den Vault-Namen.
 
-1. **Einstellungen:** „Verbindung testen“ zeigt zwei grüne Haken.
-2. **Kurze Aufnahme:** 1–2 Minuten mit zwei Personen aufnehmen, „Stopp und transkribieren“. Im Verlauf läuft der Status durch („Wird hochgeladen …“ → „Wird transkribiert …“ → „Wird gespeichert …“), danach steht das Transkript in der Liste.
-3. **Transkript öffnen:** Titel, Sprecher, Zeitstempel prüfen. „.md herunterladen“ und „In Zwischenablage kopieren“ ausprobieren.
+**Ersatzmodell:** Im kostenlosen Kontingent hat jedes Modell ein Tageslimit. Unter „Weitere Einstellungen → Ersatzmodell“ kann ein schwächeres Modell (z. B. „flash-lite“) einspringen, wenn das Limit erreicht ist.
+
+Der Key bleibt nur auf dem Gerät. Nie in Chats, Issues oder ins Repo schreiben.
+
+## Handy-Test
+
+1. **Key:** „Key prüfen“ zeigt grüne Haken.
+2. **Kurze Aufnahme:** 1–2 Minuten mit zwei Personen, dann „Fertig“. Im Verlauf laufen die Schritte Hochladen → Transkribieren → Speichern durch.
+3. **Obsidian:** Transkript öffnen → „In Obsidian speichern“ → Vault-Name eintragen → Obsidian öffnet sich mit der Notiz.
 4. **Import:** Eine Datei aus der Sprachmemo-/Rekorder-App importieren.
-5. **Obsidian:** Am PC das Vault-Repo pullen. Die Datei liegt unter `Transkripte/<Jahr>/`.
-6. **Fehlerfall:** Flugmodus an, aufnehmen, stoppen. Der Job wartet („offline“). Flugmodus aus: Er startet von selbst.
-7. **Absturz:** Während einer Aufnahme die App hart schließen. Beim nächsten Öffnen bietet „Aufnahme“ an, die unterbrochene Aufnahme wiederherzustellen.
+5. **Offline:** Flugmodus an, aufnehmen, stoppen. Der Job wartet. Flugmodus aus: Er startet von selbst.
+6. **Absturz:** Während einer Aufnahme die App hart schließen. Beim nächsten Öffnen bietet „Aufnahme“ an, sie wiederherzustellen.
 
 Bitte notieren, was nicht klappt (Gerät, Browser, Fehlermeldung).
 

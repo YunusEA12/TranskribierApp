@@ -2,6 +2,7 @@
 
 > **Arbeitstitel.** Eigener Plaud-Ersatz für Yunus und Calvin:
 > aufnehmen → transkribieren (mit Sprechern) → als Markdown im Obsidian-Vault ablegen.
+> Einzige Einrichtung: der eigene Gemini-API-Key.
 > Die Analyse passiert bewusst außerhalb der App.
 
 Stand: 2026-10-07 · Fakten zu Gemini/GitHub stammen aus den offiziellen Dokus (Links am Ende) und können sich ändern.
@@ -19,8 +20,8 @@ Stand: 2026-10-07 · Fakten zu Gemini/GitHub stammen aus den offiziellen Dokus (
 | Eigenes Vokabular (Custom Vocabulary) | Ja, als Glossar (Phase 2) |
 | Zusammenfassungen, Vorlagen, Mindmaps, „Ask Plaud“ | **Nein** – bewusst extern: Transkript exportieren, mit AI analysieren |
 | Highlights während der Aufnahme | Marker-Button (Phase 2) |
-| App + Web + Desktop mit Cloud-Sync | Eine PWA für Handy und PC, Sync über das Vault-Repo |
-| Export, Teilen, Integrationen (u. a. MCP-Server) | Markdown im Vault, Download, Kopieren; jede AI kann das Repo direkt lesen |
+| App + Web + Desktop mit Cloud-Sync | Eine PWA für Handy und PC; Sync übernimmt Obsidian |
+| Export, Teilen, Integrationen (u. a. MCP-Server) | Notiz in Obsidian, Download, Kopieren, Teilen |
 | Abo (Starter 300 Min/Monat, darüber Pro/Unlimited) | Gemini Free Tier mit eigenem API-Key |
 
 Wir orientieren uns an der Funktion, nicht am Auftritt: eigener Name, eigenes UI, keine Plaud-Assets.
@@ -32,7 +33,7 @@ Wir orientieren uns an der Funktion, nicht am Auftritt: eigener Name, eigenes UI
 3. Aufnahme im Browser und Import von Audiodateien.
 4. Transkript mit Sprechererkennung (1–5 Sprecher), Zeitstempeln, automatischer Spracherkennung.
 5. Automatisch erzeugter Titel pro Transkript.
-6. Ablage als Markdown im Obsidian-Vault, Historie in der App.
+6. Ablage als Markdown im Obsidian-Vault, Historie in der App. Einrichtung nur mit dem Gemini-API-Key (seit 2026-10-07, siehe Abschnitt 10).
 7. Export: `.md`-Download und „In Zwischenablage kopieren“.
 8. Kostenlos betreibbar.
 
@@ -56,14 +57,15 @@ Handy / PC (Browser, installierte PWA)
 │ Gemini API (eigener Key, direkt aus Browser)   │──► JSON: Titel, Sprache, Sprecher, Segmente
 │      │                                         │
 │      ▼                                         │
-│ Markdown erzeugen                              │
-│      │                                         │
+│ Markdown erzeugen, Transkript in IndexedDB     │
+│      │  (Historie der App)                     │
 │      ▼                                         │
-│ GitHub API (eigener Token)                     │──► privates Vault-Repo des Nutzers
-└────────────────────────────────────────────────┘
-                                                        │ git pull
+│ „In Obsidian speichern“ → obsidian://new       │──► Obsidian-App auf demselben Gerät
+└────────────────────────────────────────────────┘    legt die Notiz im Vault an
+                                                        │ Obsidian Sync / iCloud o. Ä.
                                                         ▼
-                                               Obsidian am PC
+                                               Vault auf allen Geräten
+(optional zusätzlich: Sicherung per GitHub-API in ein Repo)
 ```
 
 ### 2.1 Kernentscheidungen
@@ -73,9 +75,9 @@ Handy / PC (Browser, installierte PWA)
 | App-Typ | Statische PWA | Läuft auf Handy und PC, installierbar, kein Store |
 | Hosting | GitHub Pages, **öffentliches** App-Repo | Kostenlos; das Repo enthält keine Geheimnisse und keine Daten |
 | Backend | Keins | Nichts zu betreiben; der Browser spricht direkt mit Gemini und GitHub |
-| Schlüssel | Jeder trägt eigenen Gemini-Key und GitHub-Token in den Einstellungen ein; gespeichert nur lokal im Browser | Kein Key im Repo, getrennte Kontingente |
-| „Datenbank“ | Privates GitHub-Repo, das zugleich Obsidian-Vault ist; eine Markdown-Datei pro Transkript | Obsidian ist keine Datenbank, sondern ein Ordner voller Markdown-Dateien. Ein Git-Repo ist der einfachste Weg, vom Handy-Browser in diesen Ordner zu schreiben |
-| Nutzer / Historie | **Jeder Nutzer hat sein eigenes privates Vault-Repo** | Getrennte Historien ohne Login-System. Fine-grained Tokens funktionieren nicht für Repos, bei denen man nur Collaborator ist (siehe 4.5) |
+| Schlüssel | Jeder trägt nur seinen eigenen Gemini-Key in den Einstellungen ein; gespeichert nur lokal im Browser | Kein Key im Repo, getrennte Kontingente, keine weitere Einrichtung |
+| „Datenbank“ | Der Obsidian-Vault. Die App übergibt jede Notiz per `obsidian://new` an die Obsidian-App auf dem Gerät | Wunsch der Nutzer: nur API-Key, kein GitHub. Ohne Backend kann eine Web-App nur so in einen Vault schreiben |
+| Nutzer / Historie | Historie lokal in der App (IndexedDB); im Vault steht `user` im Frontmatter | Kein Login nötig; ein gemeinsamer Vault ist möglich (Sync über Obsidian) |
 | Audio | Bleibt lokal auf dem Gerät (IndexedDB), Download möglich | Git ist für große Binärdateien ungeeignet |
 | Analyse | Außerhalb der App | Anforderung |
 
@@ -145,7 +147,9 @@ Die Modell-ID ist eine Einstellung, keine Konstante im Code – die Modellnamen 
 
 ---
 
-## 4. Speicher: Obsidian-Vault als GitHub-Repo
+## 4. Speicher: Obsidian-Vault
+
+> Stand 2026-10-07: Die App schreibt nicht mehr per GitHub in den Vault, sondern übergibt jede Notiz per `obsidian://new` an Obsidian (siehe 4.7 und Abschnitt 10). 4.1 bis 4.3 gelten weiter (Struktur, Dateiname, Format). 4.4 bis 4.6 beschreiben nur noch die optionale GitHub-Sicherung.
 
 ### 4.1 Struktur des Vault-Repos (pro Nutzer, privat)
 
@@ -204,6 +208,15 @@ GitHub dokumentiert als Einschränkung, dass fine-grained Tokens nicht für Repo
 
 - **Default:** Jeder legt `mitschrift-vault` privat im eigenen Account an und erstellt ein fine-grained Token nur für dieses Repo.
 - **Alternative für einen gemeinsamen Vault:** kostenlose GitHub-Organisation mit einem Repo und einem Ordner pro Nutzer. Für die App ist das nur eine andere Einstellung (`owner/repo` + Basisordner).
+
+### 4.7 Übergabe an Obsidian (Standard)
+
+- Nach der Transkription liegt die Notiz in der App (IndexedDB). „In Obsidian speichern“ öffnet `obsidian://new?vault=<Name>&file=Transkripte/<Jahr>/<Dateiname>&overwrite=true&content=<Markdown>`.
+- Lange Transkripte (URI über 30 000 Zeichen) gehen über die Zwischenablage: `&clipboard=true` statt `content`.
+- Der Vault-Name wird einmal abgefragt (Einstellungen oder beim ersten Speichern).
+- Braucht einen Tipp des Nutzers: Ein anderes Programm zu öffnen und die Zwischenablage zu beschreiben, erlauben Browser nur nach einer Geste.
+- Erfolg kann die App nicht prüfen; sie merkt sich den Zeitpunkt der Übergabe.
+- Gemeinsamer Vault für Yunus und Calvin: Sync übernimmt Obsidian (z. B. Obsidian Sync mit geteiltem Vault). Die App braucht dafür nichts.
 
 ### 4.6 Obsidian
 
@@ -311,7 +324,7 @@ Stand 2026-10-07: Code steht und ist im Browser mit simulierten Gemini-/GitHub-A
 ### Phase 2 – Alltagstauglich
 
 - [ ] Sprecher umbenennen
-- [ ] Glossar (im Vault gespeichert, damit Handy und PC dasselbe nutzen)
+- [ ] Glossar (ohne GitHub: in den Einstellungen; Export/Import zwischen Geräten)
 - [x] Wake Lock, Autosave, Wiederherstellung nach Absturz
 - [x] Offline aufnehmen, später transkribieren
 - [ ] Suche und Filter in der Historie (einfache Titelsuche ist da)
@@ -331,6 +344,8 @@ Stand 2026-10-07: Code steht und ist im Browser mit simulierten Gemini-/GitHub-A
 ---
 
 ## 8. Einmaliges Setup (Schritt für Schritt)
+
+> Stand 2026-10-07: Für Nutzer reicht jetzt: App öffnen, zum Home-Bildschirm hinzufügen, Gemini-Key in den Einstellungen eintragen, Obsidian auf dem Gerät installiert haben. Die Schritte 2, 3 und 7 sind nur noch für die optionale GitHub-Sicherung nötig.
 
 1. **App-Repo:** Auf GitHub ein öffentliches Repo `mitschrift` anlegen. `CLAUDE.md` und `PLAN.md` hineinlegen.
 2. **Vault-Repo (jeder für sich):** Privates Repo `mitschrift-vault` anlegen, mit README initialisieren, damit der Branch `main` existiert.
@@ -361,7 +376,7 @@ Keine Rechtsberatung, nur die Punkte, die man kennen sollte:
 | # | Frage | Vorschlag | Status |
 |---|---|---|---|
 | 1 | Engine A oder B als Default? | A, nach Test in Phase 0 bestätigen | offen |
-| 2 | Getrennte Vault-Repos oder gemeinsame Organisation? | Getrennt | entschieden: getrennt, jeder mit eigenem Key (2026-10-07) |
+| 2 | Getrennte Vault-Repos oder gemeinsame Organisation? | – | ersetzt (2026-10-07): kein Vault-Repo mehr nötig, gemeinsamer Vault über Obsidian-Sync möglich |
 | 3 | Audio dauerhaft aufbewahren? | Nur lokal auf dem Gerät, manuell löschbar | offen |
 | 4 | Füllwörter entfernen als Default? | Ja | offen |
 | 5 | Welche Handys (iPhone/Android)? | Bestimmt, wie wichtig der Import-Weg ist | offen |
@@ -377,6 +392,9 @@ Getroffene Entscheidungen hier mit Datum eintragen.
 | 2026-10-07 | 429/5xx: Das Gemini-SDK wiederholt selbst (bis 4 Versuche mit Backoff). Keine eigene Retry-Schleife; schlägt es endgültig fehl, zeigt der Job „Erneut versuchen“. |
 | 2026-10-07 | Ersatzmodell: Ist das Kontingent des Hauptmodells erschöpft (429 nach den SDK-Wiederholungen), transkribiert ein in den Einstellungen gewähltes schwächeres Modell. `model:` im Frontmatter nennt das tatsächlich verwendete Modell. Die Modellliste kommt per API vom eigenen Key, damit keine Namen geraten werden müssen. |
 | 2026-10-07 | Jeder nutzt seinen eigenen Gemini-Key und Token, eingetragen in den Einstellungen der App (nur lokal gespeichert, kein Login). Bestätigt Entscheidung 2 (getrennte Vault-Repos). |
+| 2026-10-07 | **Nur noch der API-Key ist Pflicht.** Wunsch der Nutzer: kein GitHub. Transkripte liegen in der App (IndexedDB) und werden per `obsidian://new` an Obsidian übergeben (4.7). GitHub bleibt als optionale Sicherung unter „Weitere Einstellungen“. Die Historie kommt nicht mehr aus dem Repo, sondern aus der App. Das Markdown-Format (4.3) bleibt unverändert. |
+| 2026-10-07 | Gemeinsamer Vault („unser Vault“) ist möglich: Die App braucht nur den Vault-Namen; synchronisiert wird über Obsidian selbst. Ersetzt Entscheidung 2. |
+| 2026-10-07 | Optik: Nutzer wünschen ein schöneres Design. Regel 11 („Funktion vor Optik“) gilt damit nicht mehr absolut. Neues UI mit Tab-Leiste, Rekorder mit Pegelanzeige, Karten im Verlauf, Sprecherfarben. Systemschriften, keine externen Fonts (offline). |
 
 ---
 

@@ -1,7 +1,7 @@
 # Mitschrift
 
 Private Transkript-App für zwei Nutzer (Yunus, Calvin) nach dem Vorbild von Plaud:
-Audio aufnehmen oder importieren → mit Gemini transkribieren (Sprecher, Zeitstempel, Titel) → als Markdown in das Obsidian-Vault-Repo des Nutzers schreiben.
+Audio aufnehmen oder importieren → mit Gemini transkribieren (Sprecher, Zeitstempel, Titel) → als Markdown an Obsidian übergeben (`obsidian://new`). Einzige Einrichtung für Nutzer: der eigene Gemini-API-Key.
 
 Statische PWA auf GitHub Pages. Kein Backend. Die Analyse der Transkripte passiert außerhalb der App.
 
@@ -9,7 +9,7 @@ Plan, Begründungen und Phasen stehen in `PLAN.md`. Vor einer Aufgabe den passen
 
 ## Status
 
-Phase 0 und 1 parallel. Spike (`spike/`, Anleitung in `spike/README.md`) wartet auf Handy-Tests. MVP-Code für Phase 1 steht, Test mit echten Keys auf echten Handys steht aus (Anleitung in `README.md`). Diese Zeile beim Phasenwechsel aktualisieren.
+Phase 1 im Test auf echten Handys: Aufnahme, Transkription, Ablage in Obsidian per `obsidian://new`, neues Design. Spike (`spike/`) bleibt für Engine-Vergleiche erreichbar. Diese Zeile beim Phasenwechsel aktualisieren.
 
 ## Stack
 
@@ -17,7 +17,8 @@ Phase 0 und 1 parallel. Spike (`spike/`, Anleitung in `spike/README.md`) wartet 
 - `vite-plugin-pwa` für Manifest und Service Worker
 - Dexie (IndexedDB) für Audio, Jobs und den Historien-Cache
 - `@google/genai` für Gemini (Interactions API + Files API)
-- GitHub REST API per `fetch`, kein Octokit
+- Obsidian-URI (`obsidian://new`) für die Ablage im Vault
+- GitHub REST API per `fetch` nur für die optionale Sicherung, kein Octokit
 - Vitest für Logik-Tests
 - Schlichtes CSS, kein UI-Framework
 
@@ -37,7 +38,8 @@ Deploy läuft automatisch über `.github/workflows/deploy.yml` bei Push auf `mai
 ```
 src/recording/      Aufnahme (MediaRecorder, Autosave, Wake Lock), Datei-Import
 src/transcription/  TranscriptionEngine-Interface, flashEngine, transcribeEngine, Prompt, Schema
-src/vault/          GitHub-Client, Lesen/Schreiben im Vault, Markdown-Erzeugung, Dateinamen
+src/vault/          Markdown-Erzeugung, Dateinamen, Übergabe an Obsidian, optionale GitHub-Sicherung
+src/components/     kleine UI-Bausteine (Icons)
 src/jobs/           Zustandsmaschine pro Aufnahme
 src/settings/       Einstellungen in localStorage
 src/db/             IndexedDB
@@ -45,7 +47,7 @@ src/pages/          Record, History, Transcript, Settings
 spike/              Wegwerf-Code aus Phase 0, wird nicht deployt
 ```
 
-Datenfluss: `recording` → Job in `jobs/queue.ts` → `transcription` → `vault/markdown.ts` → `vault/vaultRepo.ts`.
+Datenfluss: `recording` → Job in `jobs/queue.ts` → `transcription` → `vault/markdown.ts` → Tabelle `transcripts` in IndexedDB → per Tipp `vault/obsidian.ts`. Optional zusätzlich `vault/vaultRepo.ts` (GitHub).
 
 Job-Zustände: `recorded → uploading → transcribing → saving → done`, jeder Schritt kann `failed` werden und muss wiederholbar sein.
 
@@ -61,7 +63,8 @@ Job-Zustände: `recorded → uploading → transcribing → saving → done`, je
 8. **Audio nicht ins Vault committen.** Audio bleibt in IndexedDB. Bei Google hochgeladene Dateien nach erfolgreichem Transkript löschen.
 9. **Aufnahmen dürfen nie verloren gehen.** Erst lokal speichern, dann verarbeiten. Ein Fehler bei Gemini oder GitHub lässt die Aufnahme unangetastet.
 10. **Nichts von Plaud übernehmen** außer der Idee: keine Namen, Texte, Logos oder Screenshots.
-11. **Funktion vor Optik.** Kein Aufwand für Design, solange nicht ausdrücklich verlangt. Bedienbar auf einem Handy-Bildschirm muss es trotzdem sein.
+11. **Design gehört dazu.** Die Nutzer wollen ein ansprechendes UI (seit 2026-10-07). Farben nur über die Tokens in `src/styles.css`, beide Themes (hell/dunkel), Systemschriften, Handy zuerst.
+12. **Nur der API-Key ist Pflicht.** Keine neue Pflicht-Einstellung einführen, ohne nachzufragen.
 
 ## Arbeitsweise
 
@@ -69,8 +72,8 @@ Job-Zustände: `recorded → uploading → transcribing → saving → done`, je
 - Kleine Schritte, ein Thema pro Commit.
 - Entscheidungen mit Datum in `PLAN.md` Abschnitt 10 eintragen.
 - Gemini- und GitHub-Details gegen die aktuelle Doku prüfen (Links am Ende von `PLAN.md`), nicht aus dem Gedächtnis schreiben. Die Interactions API ist neu, Modellnamen und Limits ändern sich häufig.
-- Reine Logik (`vault/markdown.ts`, `vault/paths.ts`, `transcription/schema.ts`, `jobs/queue.ts`) bekommt Vitest-Tests. Aufnahme und PWA-Verhalten werden von Hand auf echten Handys getestet; dafür eine kurze Test-Anleitung ausgeben.
-- Netzwerkaufrufe laufen nur über `vault/githubClient.ts` und die Engines in `transcription/`, nicht direkt aus Komponenten.
+- Reine Logik (`vault/markdown.ts`, `vault/paths.ts`, `vault/obsidian.ts`, `transcription/schema.ts`, `jobs/queue.ts`) bekommt Vitest-Tests. Aufnahme und PWA-Verhalten werden von Hand auf echten Handys getestet; dafür eine kurze Test-Anleitung ausgeben.
+- Netzwerkaufrufe laufen nur über `vault/githubClient.ts` und `transcription/` (Gemini), nicht direkt aus Komponenten. Die Übergabe an Obsidian läuft nur über `vault/obsidian.ts`.
 - Fehler werden dem Nutzer als verständlicher deutscher Satz gezeigt, mit „Erneut versuchen“.
 
 ## Sprache
