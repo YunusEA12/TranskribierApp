@@ -31,7 +31,7 @@ export function googleErrorDetail(e: unknown): string {
  */
 export function isNetworkError(e: unknown): boolean {
   const message = e instanceof Error ? `${e.message} ${String((e as { cause?: unknown }).cause ?? '')}` : String(e);
-  return /load failed|failed to fetch|networkerror|network connection was lost|internet connection appears to be offline|unexpected http client error/i.test(message);
+  return /load failed|failed to fetch|networkerror|network connection was lost|internet connection appears to be offline|unexpected http client error|timed out|timeouterror/i.test(message);
 }
 
 export function toUserMessage(e: unknown, service?: 'github' | 'gemini'): string {

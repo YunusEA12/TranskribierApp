@@ -150,7 +150,7 @@ async function runJob(id: string): Promise<void> {
       console.error(`Job ${id} failed at ${step}`, e);
       const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
       // After a dropped connection the interaction keeps running at Google; anything else needs a fresh start.
-      if (step === 'transcribing' && !isNetworkError(e)) Object.assign(patch, { interactionId: undefined, interactionModel: undefined });
+      if (step === 'transcribing' && !isNetworkError(e)) Object.assign(patch, { interactionId: undefined, interactionModel: undefined, remoteStatus: undefined, lastPollAt: undefined });
       await db.jobs.update(id, patch);
       return;
     }
@@ -170,10 +170,11 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       const engine = createEngine(ai, settings);
       const result = await engine.transcribe(
         job.upload!,
-        { speakerCount: job.speakerCount, glossary: [], removeFillers: settings.removeFillers },
+        { speakerCount: job.speakerCount, glossary: [], removeFillers: settings.removeFillers, durationSec: job.durationSec },
         {
           resume: job.interactionId && job.interactionModel ? { id: job.interactionId, model: job.interactionModel } : undefined,
           onStarted: (id, model) => db.jobs.update(job.id, { interactionId: id, interactionModel: model }).then(() => undefined),
+          onPoll: (status) => db.jobs.update(job.id, { remoteStatus: status, lastPollAt: Date.now() }).then(() => undefined),
         },
       );
       await db.jobs.update(job.id, transcriptionDone(result, engine.model, Date.now()));

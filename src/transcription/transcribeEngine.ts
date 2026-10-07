@@ -5,7 +5,7 @@ import type { GoogleGenAI } from '@google/genai';
 import { formatClock } from '../lib/time';
 import type { UploadedAudio } from '../jobs/queue';
 import type { Segment, TranscriptResult } from '../types';
-import type { TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
+import { backgroundWaitMs, type TranscribeContext, type TranscribeOptions, type TranscriptionEngine } from './engine';
 import { geminiCall, outputText, runTranscription, textContents } from './gemini';
 import { buildTitlePrompt } from './prompt';
 import { validateTranscriptResult } from './schema';
@@ -58,7 +58,7 @@ export class TranscribeEngine implements TranscriptionEngine {
   ) {}
 
   // Speaker count and filler removal are not configurable for this model.
-  async transcribe(audio: UploadedAudio, _options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
+  async transcribe(audio: UploadedAudio, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
     // Diarization and custom vocabulary cannot be combined (PLAN.md 3.2); speakers win.
     const res = await runTranscription(
       this.ai,
@@ -72,6 +72,8 @@ export class TranscribeEngine implements TranscriptionEngine {
       {
         resumeId: context.resume?.model === this.model ? context.resume.id : undefined,
         onStarted: (id) => context.onStarted?.(id, this.model) ?? Promise.resolve(),
+        onPoll: context.onPoll,
+        maxWaitMs: backgroundWaitMs(options.durationSec),
       },
       this.model,
     );

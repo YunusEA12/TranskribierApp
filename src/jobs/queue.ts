@@ -33,6 +33,9 @@ export interface Job {
   /** Gemini interaction running in the background for this job, so polling can resume after the app was closed. */
   interactionId?: string;
   interactionModel?: string;
+  /** Gemini's last reported status while transcribing ("queued", "in_progress", "direct" for a normal request). */
+  remoteStatus?: string;
+  lastPollAt?: number;
   result?: TranscriptResult;
   model?: string;
   vaultPath?: string;
@@ -93,7 +96,7 @@ export function uploadDone(upload: UploadedAudio, now: number): Partial<Job> {
 }
 
 export function transcriptionDone(result: TranscriptResult, model: string, now: number): Partial<Job> {
-  return { status: 'saving', result, model, interactionId: undefined, interactionModel: undefined, updatedAt: now };
+  return { status: 'saving', result, model, interactionId: undefined, interactionModel: undefined, remoteStatus: undefined, lastPollAt: undefined, updatedAt: now };
 }
 
 export function savingDone(vaultPath: string, now: number): Partial<Job> {

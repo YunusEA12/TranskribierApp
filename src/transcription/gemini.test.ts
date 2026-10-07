@@ -6,8 +6,8 @@ import { InteractionFailedError, runInBackground, runTranscription } from './gem
 afterEach(() => vi.useRealTimers());
 
 function fakeAi(create: () => unknown, get: () => unknown) {
-  return { interactions: { create: vi.fn(async () => create()), get: vi.fn(async () => get()) } } as unknown as GoogleGenAI & {
-    interactions: { create: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> };
+  return { interactions: { create: vi.fn(async () => create()), get: vi.fn(async () => get()), cancel: vi.fn(async () => ({})) } } as unknown as GoogleGenAI & {
+    interactions: { create: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> };
   };
 }
 
@@ -76,5 +76,21 @@ describe('runTranscription', () => {
   it('explains when the model cannot take audio at all', async () => {
     const ai = fakeAi(modality, () => ({}));
     await expect(runTranscription(ai, { model: 'm', input: 'x' }, {}, 'gemini-x-agent')).rejects.toThrow(/kann keine Audiodateien/);
+  });
+});
+
+describe('runTranscription with a stuck background run', () => {
+  it('cancels it and makes a normal request', async () => {
+    vi.useFakeTimers();
+    const ai = fakeAi(() => ({ id: 'slow', status: 'in_progress' }), () => ({ status: 'in_progress' }));
+    ai.interactions.create.mockImplementationOnce(async () => ({ id: 'slow', status: 'in_progress' }));
+    ai.interactions.create.mockImplementationOnce(async () => ({ status: 'completed', output_text: 'direct' }));
+    const statuses: string[] = [];
+    const p = runTranscription(ai, { model: 'm', input: 'x' }, { maxWaitMs: 60_000, onPoll: (s) => void statuses.push(s) }, 'm');
+    for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(10_000);
+    await expect(p).resolves.toMatchObject({ output_text: 'direct' });
+    expect(ai.interactions.cancel).toHaveBeenCalledWith('slow');
+    expect(statuses).toContain('in_progress');
+    expect(statuses.at(-1)).toBe('direct');
   });
 });

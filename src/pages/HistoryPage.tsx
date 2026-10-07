@@ -29,6 +29,30 @@ function stepClass(job: Job, step: Step): string {
   return '';
 }
 
+const REMOTE_STATUS: Record<string, string> = {
+  queued: 'in der Warteschlange',
+  in_progress: 'wird bearbeitet',
+  completed: 'fertig',
+};
+
+function TranscribingInfo({ job }: { job: Job }) {
+  if (job.remoteStatus === 'direct') {
+    return <small>Direkte Anfrage an Gemini läuft. Bitte die App geöffnet lassen, bis das Transkript da ist.</small>;
+  }
+  return (
+    <small>
+      Läuft bei Google weiter. Du kannst die App verlassen und später wiederkommen.
+      {job.remoteStatus && (
+        <>
+          <br />
+          Gemini: {REMOTE_STATUS[job.remoteStatus] ?? job.remoteStatus}
+          {job.lastPollAt && ` · zuletzt geprüft ${new Date(job.lastPollAt).toLocaleTimeString('de-DE')}`}
+        </>
+      )}
+    </small>
+  );
+}
+
 function JobCard({ job, waitingReason }: { job: Job; waitingReason: string }) {
   const [busy, setBusy] = useState(false);
   const label = job.fileName ?? `Aufnahme ${new Date(job.recordedAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}`;
@@ -47,7 +71,7 @@ function JobCard({ job, waitingReason }: { job: Job; waitingReason: string }) {
       </div>
       {job.status === 'recorded' && <small>{waitingReason || 'Startet gleich …'}</small>}
       {job.status === 'uploading' && <small>Bitte die App geöffnet lassen, bis das Hochladen fertig ist.</small>}
-      {job.status === 'transcribing' && <small>Läuft bei Google weiter. Du kannst die App verlassen und später wiederkommen.</small>}
+      {job.status === 'transcribing' && <TranscribingInfo job={job} />}
       {job.status === 'failed' && (
         <>
           <p className="error-text">{job.error}</p>

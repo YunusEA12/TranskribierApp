@@ -3,7 +3,7 @@
 import type { GoogleGenAI } from '@google/genai';
 import type { UploadedAudio } from '../jobs/queue';
 import type { TranscriptResult } from '../types';
-import type { TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
+import { backgroundWaitMs, type TranscribeContext, type TranscribeOptions, type TranscriptionEngine } from './engine';
 import { outputText, runTranscription } from './gemini';
 import { buildTranscriptionPrompt } from './prompt';
 import { TRANSCRIPT_SCHEMA, TranscriptValidationError, validateTranscriptResult } from './schema';
@@ -28,6 +28,8 @@ export class FlashEngine implements TranscriptionEngine {
       {
         resumeId: context.resume?.model === this.model ? context.resume.id : undefined,
         onStarted: (id) => context.onStarted?.(id, this.model) ?? Promise.resolve(),
+        onPoll: context.onPoll,
+        maxWaitMs: backgroundWaitMs(options.durationSec),
       },
       this.model,
     );

@@ -86,12 +86,19 @@ export interface BackgroundRun {
   resumeId?: string;
   /** Called once the interaction is accepted, so the caller can persist its id. */
   onStarted?: (id: string) => Promise<void>;
+  /** Called with Gemini's status after every poll, so the UI can show it. */
+  onPoll?: (status: string) => Promise<void> | void;
+  /** Give up waiting after this long (counted from this call). */
+  maxWaitMs?: number;
 }
+
+/** The background run did not finish in time; the caller may try a normal request instead. */
+export class BackgroundTimeoutError extends Error {}
 
 const POLL_FIRST_MS = 3000;
 const POLL_MAX_MS = 15000;
 const MAX_POLL_NETWORK_ERRORS = 8;
-const MAX_WAIT_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_MAX_WAIT_MS = 2 * 60 * 60 * 1000;
 const POLL_TIMEOUT_MS = 30000;
 
 type CreateParams = Parameters<GoogleGenAI['interactions']['create']>[0];
@@ -109,15 +116,17 @@ export async function runInBackground(ai: GoogleGenAI, params: CreateParams, run
   }
 
   const started = Date.now();
+  const maxWait = run.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
   let delay = POLL_FIRST_MS;
   let networkErrors = 0;
-  while (Date.now() - started < MAX_WAIT_MS) {
+  while (Date.now() - started < maxWait) {
     await sleep(delay);
     delay = Math.min(POLL_MAX_MS, Math.round(delay * 1.4));
     let interaction: { status?: string };
     try {
       interaction = (await geminiCall(() => ai.interactions.get(id, undefined, { timeout: POLL_TIMEOUT_MS, maxRetries: 0 }))) as { status?: string };
       networkErrors = 0;
+      await run.onPoll?.(interaction.status ?? 'unbekannt');
     } catch (e) {
       // A poll that died with the app in the background is harmless; ask again.
       if (isNetworkError(e) && ++networkErrors < MAX_POLL_NETWORK_ERRORS) continue;
@@ -133,7 +142,9 @@ export async function runInBackground(ai: GoogleGenAI, params: CreateParams, run
         throw new InteractionFailedError(`Gemini hat die Transkription abgebrochen (Status: ${interaction.status}).`);
     }
   }
-  throw new InteractionFailedError('Gemini braucht ungewöhnlich lange. Bitte später erneut versuchen.');
+  // Cancel so the abandoned run does not keep using quota; failures here do not matter.
+  await ai.interactions.cancel(id).catch(() => undefined);
+  throw new BackgroundTimeoutError(`Background interaction ${id} did not finish within ${Math.round(maxWait / 1000)} s`);
 }
 
 /** Gemini says the model cannot take audio, e.g. "Audio input modality is not enabled for models/…". */
@@ -143,14 +154,16 @@ export function isAudioUnsupported(e: unknown): boolean {
 
 /**
  * Runs a transcription in the background (see runInBackground). If Gemini rejects the audio in that
- * mode, the same request runs once as a normal request before giving up with a clear message.
+ * mode, or the background run gets stuck, the same request runs once as a normal request (the app
+ * has to stay open for that one) before giving up with a clear message.
  */
 export async function runTranscription(ai: GoogleGenAI, params: CreateParams, run: BackgroundRun, model: string): Promise<unknown> {
   try {
     return await runInBackground(ai, params, run);
   } catch (e) {
-    if (!isAudioUnsupported(e)) throw e;
-    console.warn(`Background run rejected audio for ${model}; trying a normal request`, e);
+    if (!isAudioUnsupported(e) && !(e instanceof BackgroundTimeoutError)) throw e;
+    console.warn(`Background run failed for ${model}; trying a normal request`, e);
+    await run.onPoll?.('direct');
   }
   try {
     return await geminiCall(() => ai.interactions.create(params));
