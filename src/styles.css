@@ -219,6 +219,20 @@ label.toggle input { width: 20px; height: 20px; accent-color: var(--vault); }
 .import-card b { display: block; font-size: 1rem; }
 .import-card small { font-weight: 400; display: block; }
 
+/* Pocket mode: deliberately one look in both themes, pure black so an OLED screen draws almost nothing. */
+:root { --pocket-bg: #000000; --pocket-fg: #3d3d3d; --pocket-rec: #6b1f1d; }
+.pocket {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-content: center; justify-items: center; gap: 14px;
+  background: var(--pocket-bg); color: var(--pocket-fg);
+  padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+  -webkit-user-select: none; user-select: none; touch-action: manipulation;
+}
+.pocket-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--pocket-rec); animation: blink 2.4s ease-in-out infinite; }
+.pocket-dot.paused { animation: none; background: var(--pocket-fg); }
+.pocket-clock { font: 300 2.6rem/1 var(--font-display); font-variant-numeric: tabular-nums; }
+.pocket-hint { font-size: 0.85rem; text-align: center; }
+
 /* ---------- history ---------- */
 .search { position: relative; }
 .search .icon { position: absolute; left: 14px; top: 50%; translate: 0 -50%; color: var(--faint); }

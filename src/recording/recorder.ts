@@ -8,6 +8,12 @@ const CHUNK_MS = 5000;
 
 export type RecorderState = 'idle' | 'recording' | 'paused';
 
+/** A stretch of time in which the app was in the background; iOS does not record during it. */
+export interface BackgroundGap {
+  from: number;
+  to: number;
+}
+
 export class Recorder {
   private media: MediaRecorder | null = null;
   private stream: MediaStream | null = null;
@@ -22,6 +28,9 @@ export class Recorder {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private samples: Uint8Array<ArrayBuffer> | null = null;
+  private hiddenSince: number | null = null;
+  /** Times the app was in the background during the current recording. */
+  gaps: BackgroundGap[] = [];
 
   get state(): RecorderState {
     if (!this.media || this.media.state === 'inactive') return 'idle';
@@ -60,6 +69,8 @@ export class Recorder {
     this.accumulatedMs = 0;
     this.runningSince = performance.now();
     this.speakerCount = speakerCount;
+    this.gaps = [];
+    this.hiddenSince = null;
     this.media.ondataavailable = (e) => {
       if (!e.data.size) return;
       this.pendingWrites.push(
@@ -153,10 +164,35 @@ export class Recorder {
     }
   }
 
-  // The browser drops the wake lock when the page is hidden; take it again on return.
+  /** True if the system ended the microphone while the app was away (iOS does this in the background). */
+  get interrupted(): boolean {
+    const track = this.stream?.getAudioTracks()[0];
+    return this.stream !== null && (track?.readyState === 'ended' || this.media?.state === 'inactive');
+  }
+
+  // iOS pauses web apps in the background; remember when, so the user knows what is missing.
+  // The browser also drops the wake lock when the page is hidden; take it again on return.
   private onVisibilityChange = () => {
-    if (document.visibilityState === 'visible' && this.state !== 'idle') void this.acquireWakeLock();
+    if (document.visibilityState === 'hidden') {
+      if (this.state !== 'idle') this.hiddenSince = Date.now();
+      return;
+    }
+    if (this.hiddenSince !== null) {
+      this.gaps.push({ from: this.hiddenSince, to: Date.now() });
+      this.hiddenSince = null;
+    }
+    if (this.state !== 'idle') void this.acquireWakeLock();
   };
+
+  /** After the system ended the recording: keep what was saved and turn it into a job. */
+  async salvage(): Promise<string> {
+    await Promise.all(this.pendingWrites);
+    this.pendingWrites = [];
+    const sessionId = this.sessionId;
+    const durationSec = this.elapsedSec;
+    this.cleanup();
+    return finalizeSession(sessionId, { durationSec, speakerCount: this.speakerCount });
+  }
 }
 
 /** The app's one recorder; module-level so a recording survives switching pages. */

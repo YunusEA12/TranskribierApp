@@ -24,12 +24,18 @@ export function RecordPage() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [interrupted, setInterrupted] = useState<Interrupted>([]);
+  const [systemStopped, setSystemStopped] = useState(false);
+  const [gapSec, setGapSec] = useState(0);
+  const [pocket, setPocket] = useState(false);
+  const lastTap = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const t = setInterval(() => {
       setElapsed(recorder.elapsedSec);
       setState(recorder.state);
+      setSystemStopped(recorder.interrupted);
+      setGapSec(recorder.gaps.reduce((sum, g) => sum + (g.to - g.from) / 1000, 0));
       if (recorder.state === 'recording') setLevels((l) => [...l.slice(1), recorder.level()]);
     }, 90);
     return () => clearInterval(t);
@@ -80,6 +86,17 @@ export function RecordPage() {
       navigate(hrefFor.history);
     });
   };
+  const salvage = () =>
+    run(async () => {
+      await recorder.salvage();
+      navigate(hrefFor.history);
+    });
+  // Leaving pocket mode needs a double tap, so a touch in the pocket does nothing.
+  const pocketTap = () => {
+    const now = Date.now();
+    if (now - lastTap.current < 450) setPocket(false);
+    lastTap.current = now;
+  };
   const recover = (sessionId: string) =>
     run(async () => {
       await recoverSession(sessionId);
@@ -107,6 +124,28 @@ export function RecordPage() {
           <span>Noch einrichten: {missingSettings(settings).join(', ')}. Aufnehmen geht schon, verarbeitet wird danach.</span>
           <span className="go">Einrichten</span>
         </a>
+      )}
+
+      {systemStopped && (
+        <div className="card stack">
+          <div className="row">
+            <Icon name="alert" />
+            <b>Das iPhone hat die Aufnahme beendet</b>
+          </div>
+          <small>Das passiert, wenn die App im Hintergrund war oder der Bildschirm gesperrt wurde. Alles bis dahin ist gespeichert.</small>
+          <button className="btn-vault" onClick={() => void salvage()} disabled={busy}>
+            Speichern und transkribieren
+          </button>
+        </div>
+      )}
+
+      {active && gapSec >= 2 && (
+        <div className="banner">
+          <Icon name="alert" />
+          <span>
+            Die App war {formatClock(gapSec)} im Hintergrund. In dieser Zeit hat das iPhone vermutlich nicht aufgenommen.
+          </span>
+        </div>
       )}
 
       {interrupted.map((s) => (
@@ -176,9 +215,15 @@ export function RecordPage() {
       </section>
 
       {active ? (
-        <p className="muted" style={{ textAlign: 'center', fontSize: '0.88rem' }}>
-          Der Bildschirm bleibt an. App nicht schließen oder wechseln, sonst stoppt das iPhone die Aufnahme.
-        </p>
+        <>
+          <button className="btn-ghost btn-block" onClick={() => setPocket(true)}>
+            Taschen-Modus: Bildschirm schwarz
+          </button>
+          <p className="muted" style={{ textAlign: 'center', fontSize: '0.88rem' }}>
+            Nicht sperren und die App nicht verlassen, sonst nimmt das iPhone nicht weiter auf. Für Tasche oder Tisch: Taschen-Modus. Der
+            Bildschirm wird schwarz, die Aufnahme läuft weiter.
+          </p>
+        </>
       ) : (
         <>
           <div className="stack">
@@ -198,7 +243,10 @@ export function RecordPage() {
             </span>
             <span>
               <b>Audiodatei importieren</b>
-              <small>Zum Beispiel aus der Sprachmemo-App. Für lange Meetings der sichere Weg.</small>
+              <small>
+                Mit gesperrtem Bildschirm aufnehmen geht nur mit der iPhone-App „Sprachmemos“: dort aufnehmen, dann Teilen → „In Dateien
+                sichern“ und hier importieren.
+              </small>
             </span>
           </button>
           <input
@@ -215,6 +263,14 @@ export function RecordPage() {
       )}
 
       {error && <p className="error-text">{error}</p>}
+
+      {pocket && active && (
+        <div className="pocket" role="button" aria-label="Taschen-Modus. Doppelt tippen zum Beenden." onClick={pocketTap}>
+          <span className={`pocket-dot ${state}`} />
+          <span className="pocket-clock">{formatClock(elapsed)}</span>
+          <span className="pocket-hint">{state === 'paused' ? 'Pausiert' : 'Aufnahme läuft'} · doppelt tippen zum Zurückkehren</span>
+        </div>
+      )}
     </div>
   );
 }
