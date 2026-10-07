@@ -5,6 +5,12 @@ import { HttpError } from '../lib/errors';
 
 const API = 'https://api.github.com';
 
+export interface TreeEntry {
+  path: string;
+  sha: string;
+  type: 'blob' | 'tree' | 'commit';
+}
+
 export interface RepoFile {
   sha: string;
   text: string;
@@ -36,28 +42,36 @@ export class GithubClient {
     return res;
   }
 
-  private async fail(res: Response, what: string): Promise<never> {
-    let detail = '';
-    try {
-      detail = ((await res.json()) as { message?: string }).message ?? '';
-    } catch {
-      // Body is not JSON; the status says enough.
-    }
-    throw new HttpError('github', res.status, `${what}: HTTP ${res.status} ${detail}`.trim());
+  private async fail(res: Response, what: string, detail?: string): Promise<never> {
+    throw new HttpError('github', res.status, `${what}: HTTP ${res.status} ${detail ?? (await messageOf(res))}`.trim());
   }
 
   private get repoPath() {
     return `/repos/${this.config.repo}`;
   }
 
-  /** Checks token, repo and branch; returns whether the token may write. */
+  /** Checks token and repo; returns whether the token may write. A new, empty repo is fine. */
   async checkAccess(): Promise<{ canPush: boolean }> {
     const repo = await this.request(this.repoPath);
     if (!repo.ok) await this.fail(repo, 'Repo lesen');
     const data = (await repo.json()) as { permissions?: { push?: boolean } };
-    const branch = await this.request(`${this.repoPath}/branches/${encodeURIComponent(this.config.branch)}`);
-    if (!branch.ok) await this.fail(branch, 'Branch lesen');
     return { canPush: data.permissions?.push ?? false };
+  }
+
+  /** All files in the branch. An empty repo (no commit yet) has none. */
+  async listTree(): Promise<TreeEntry[]> {
+    const res = await this.request(`${this.repoPath}/git/trees/${encodeURIComponent(this.config.branch)}?recursive=1`);
+    if (res.status === 409) return []; // "Git Repository is empty."
+    if (res.status === 404) {
+      // Either the branch does not exist yet (empty repo) or there is no access at all.
+      const repo = await this.request(this.repoPath);
+      if (repo.ok) return [];
+      await this.fail(repo, 'Repo lesen');
+    }
+    if (!res.ok) await this.fail(res, 'Dateiliste lesen');
+    const data = (await res.json()) as { tree: TreeEntry[]; truncated?: boolean };
+    if (data.truncated) console.warn('GitHub tree listing was truncated');
+    return data.tree;
   }
 
   /** Returns null if the file does not exist. */
@@ -76,12 +90,28 @@ export class GithubClient {
 
   /** Creates the file, or updates it when `sha` of the current version is given. Returns the new sha. */
   async putFile(path: string, text: string, message: string, sha?: string): Promise<string> {
-    const res = await this.request(`${this.repoPath}/contents/${encodePath(path)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ message, content: utf8ToBase64(text), branch: this.config.branch, ...(sha ? { sha } : {}) }),
-    });
-    if (!res.ok) await this.fail(res, 'Datei schreiben');
+    const put = (withBranch: boolean) =>
+      this.request(`${this.repoPath}/contents/${encodePath(path)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ message, content: utf8ToBase64(text), ...(withBranch ? { branch: this.config.branch } : {}), ...(sha ? { sha } : {}) }),
+      });
+    let res = await put(true);
+    if (!res.ok) {
+      const detail = await messageOf(res);
+      // In an empty repo the branch does not exist yet; the first file creates the default branch.
+      if (!/branch|empty/i.test(detail)) await this.fail(res, 'Datei schreiben', detail);
+      res = await put(false);
+      if (!res.ok) await this.fail(res, 'Datei schreiben');
+    }
     const data = (await res.json()) as { content: { sha: string } };
     return data.content.sha;
+  }
+}
+
+async function messageOf(res: Response): Promise<string> {
+  try {
+    return ((await res.json()) as { message?: string }).message ?? '';
+  } catch {
+    return ''; // Body is not JSON; the status says enough.
   }
 }

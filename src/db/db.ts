@@ -1,8 +1,9 @@
 // IndexedDB: audio (never leaves the device except for the Gemini upload), jobs, recording chunks
-// for crash recovery, and the finished transcripts (the app's history).
+// for crash recovery, transcripts made on this device, and a cache of the shared storage.
 
 import Dexie, { type EntityTable } from 'dexie';
 import type { Job } from '../jobs/queue';
+import type { RemoteEntry } from '../vault/vaultRepo';
 
 export interface AudioRecord {
   id: string;
@@ -33,8 +34,13 @@ export interface TranscriptRecord {
   speakerCount: number;
   markdown: string;
   createdAt: number;
-  obsidianAt?: number; // last hand-off to Obsidian
-  githubPath?: string; // set when the optional GitHub backup succeeded
+  githubPath?: string; // set once the transcript is in the shared storage
+}
+
+export interface RemoteFile {
+  path: string;
+  sha: string;
+  text: string;
 }
 
 export class MitschriftDb extends Dexie {
@@ -42,6 +48,8 @@ export class MitschriftDb extends Dexie {
   jobs!: EntityTable<Job, 'id'>;
   chunks!: EntityTable<RecordingChunk, 'id'>;
   transcripts!: EntityTable<TranscriptRecord, 'id'>;
+  remote!: EntityTable<RemoteEntry, 'path'>;
+  remoteFiles!: EntityTable<RemoteFile, 'path'>;
 
   constructor() {
     super('mitschrift');
@@ -52,11 +60,16 @@ export class MitschriftDb extends Dexie {
       history: 'path, date',
       files: 'path',
     });
-    // v2: transcripts are kept on the device and handed to Obsidian; the GitHub history cache is gone.
+    // v2: transcripts are kept on the device; the old history cache is gone.
     this.version(2).stores({
       transcripts: 'id, path, createdAt',
       history: null,
       files: null,
+    });
+    // v3: the shared storage (GitHub repo) is the common history of both users.
+    this.version(3).stores({
+      remote: 'path, date, user',
+      remoteFiles: 'path',
     });
   }
 }

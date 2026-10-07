@@ -39,3 +39,23 @@ export function transcriptPath(date: string, time: string, title: string, opts: 
   const name = `${date} ${time.replace(':', '')} ${sanitizeTitle(title)}${suffix > 1 ? ` (${suffix})` : ''}.md`;
   return `${TRANSCRIPTS_DIR}/${person ? `${person}/` : ''}${year}/${name}`;
 }
+
+export interface TranscriptFileInfo {
+  path: string;
+  user: string; // folder name, "" for files without a person folder
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  title: string;
+}
+
+const FILE_RE = /^(\d{4}-\d{2}-\d{2}) (\d{2})(\d{2}) (.+)\.md$/;
+
+/** Reads person, date, time and title from a path like "Transkripte/Yunus/2026/2026-10-07 0841 Titel.md". */
+export function parseTranscriptPath(path: string): TranscriptFileInfo | null {
+  const parts = path.split('/');
+  if (parts[0] !== TRANSCRIPTS_DIR || (parts.length !== 3 && parts.length !== 4)) return null;
+  const m = FILE_RE.exec(parts[parts.length - 1]!);
+  if (!m) return null;
+  const [, date, hh, mm, rest] = m as unknown as [string, string, string, string, string];
+  return { path, user: parts.length === 4 ? parts[1]! : '', date, time: `${hh}:${mm}`, title: rest.replace(/ \(\d+\)$/, '') };
+}

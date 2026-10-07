@@ -1,100 +1,147 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { SaveToObsidianButton } from '../components/SaveToObsidianButton';
 import { db, type TranscriptRecord } from '../db/db';
 import { discardJob } from '../jobs/runner';
 import { audioExtension, downloadBlob } from '../lib/download';
+import { toUserMessage } from '../lib/errors';
 import { hrefFor, navigate } from '../router';
-import { useSettings } from '../settings/settingsStore';
+import { getSettings } from '../settings/settingsStore';
 import type { Transcript } from '../types';
 import { parseMarkdown } from '../vault/markdown';
+import { parseTranscriptPath } from '../vault/paths';
+import { clientFromSettings, readTranscript } from '../vault/vaultRepo';
 
 const speakerClass = (index: number) => `sp-${(index % 5) + 1}`;
 
-function VaultBox({ record }: { record: TranscriptRecord }) {
-  const settings = useSettings();
+const Back = () => (
+  <a className="back" href={hrefFor.history}>
+    <Icon name="back" size={20} /> Verlauf
+  </a>
+);
+
+/** `id` is a local transcript id, or "r:<path>" for a transcript that is only in the shared storage. */
+export function TranscriptPage({ id }: { id: string }) {
+  const remotePath = id.startsWith('r:') ? id.slice(2) : null;
+  // null = not found, undefined = still loading
+  const local = useLiveQuery(
+    async () => (remotePath ? await db.transcripts.where('path').equals(remotePath).first() : await db.transcripts.get(id)) ?? null,
+    [id],
+  );
+  const [remoteText, setRemoteText] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const loadRemote = useCallback(async () => {
+    if (!remotePath) return;
+    setError('');
+    try {
+      const cached = await db.remoteFiles.get(remotePath);
+      const entry = await db.remote.get(remotePath);
+      if (cached) setRemoteText(cached.text);
+      if (cached && entry && cached.sha === entry.sha) return;
+      const file = await readTranscript(clientFromSettings(getSettings()), remotePath);
+      if (!file) {
+        if (!cached) setError('Dieses Transkript gibt es im Speicher nicht mehr.');
+        return;
+      }
+      await db.remoteFiles.put({ path: remotePath, sha: file.sha, text: file.text });
+      setRemoteText(file.text);
+    } catch (e) {
+      setError(toUserMessage(e, 'github'));
+    }
+  }, [remotePath]);
+
+  useEffect(() => {
+    if (local === null) void loadRemote();
+  }, [local, loadRemote]);
+
+  if (local === undefined) return null;
+  if (local) return <TranscriptView markdown={local.markdown} path={local.path} record={local} />;
+  if (remotePath && remoteText !== null) return <TranscriptView markdown={remoteText} path={remotePath} />;
+
   return (
-    <div className="card vault-box">
-      <SaveToObsidianButton record={record} />
-      <span className="note">
-        {record.obsidianAt
-          ? `An Obsidian übergeben am ${new Date(record.obsidianAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}. Erneut speichern überschreibt die Notiz.`
-          : 'Öffnet Obsidian und legt die Notiz an.'}
-      </span>
-      <span className="note">
-        Vault „{settings.sharedVault}“ · Ordner {record.path.slice(0, record.path.lastIndexOf('/'))}
-      </span>
+    <div className="page">
+      <Back />
+      {error ? (
+        <p className="error-text">
+          {error}{' '}
+          <button className="btn-small btn-ghost" onClick={() => void loadRemote()}>
+            Erneut versuchen
+          </button>
+        </p>
+      ) : remotePath ? (
+        <p className="muted">Lädt …</p>
+      ) : (
+        <p className="muted">Transkript nicht gefunden.</p>
+      )}
     </div>
   );
 }
 
-export function TranscriptPage({ id }: { id: string }) {
-  // null = not found, undefined = still loading
-  const record = useLiveQuery(async () => (await db.transcripts.get(id)) ?? null, [id]);
-  const audio = useLiveQuery(() => db.audio.get(id), [id]);
+function TranscriptView({ markdown, path, record }: { markdown: string; path: string; record?: TranscriptRecord }) {
+  const audio = useLiveQuery(() => (record ? db.audio.get(record.id) : undefined), [record?.id]);
   const [copied, setCopied] = useState(false);
-
-  if (record === undefined) return null;
-  if (record === null) {
-    return (
-      <div className="page">
-        <a className="back" href={hrefFor.history}>
-          <Icon name="back" size={20} /> Verlauf
-        </a>
-        <p className="muted">Transkript nicht gefunden.</p>
-      </div>
-    );
-  }
 
   let transcript: Transcript | null = null;
   try {
-    transcript = parseMarkdown(record.markdown);
+    transcript = parseMarkdown(markdown);
   } catch {
     transcript = null;
   }
+  const info = parseTranscriptPath(path);
+  const title = transcript?.meta.title || info?.title || 'Transkript';
+  const date = transcript?.meta.date || info?.date || '';
+  const time = transcript?.meta.time || info?.time || '';
   const speakerIds = transcript ? Object.keys(transcript.meta.speakers) : [];
-  const fileName = record.path.slice(record.path.lastIndexOf('/') + 1);
+  const fileName = path.slice(path.lastIndexOf('/') + 1);
 
   const copy = async () => {
-    await navigator.clipboard.writeText(record.markdown);
+    await navigator.clipboard.writeText(markdown);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-  const file = () => new File([record.markdown], fileName, { type: 'text/markdown' });
+  const file = () => new File([markdown], fileName, { type: 'text/markdown' });
   const canShare = typeof navigator.canShare === 'function' && navigator.canShare({ files: [file()] });
   const share = async () => {
     try {
-      await navigator.share({ files: [file()], title: record.title });
+      await navigator.share({ files: [file()], title });
     } catch {
       // Cancelled by the user.
     }
   };
   const remove = async () => {
-    if (!confirm('Transkript und Audio auf diesem Gerät löschen? Eine Notiz in Obsidian bleibt erhalten.')) return;
-    await discardJob(id);
+    if (!record) return;
+    if (!confirm('Transkript und Audio auf diesem Handy löschen? Die Kopie im gemeinsamen Speicher bleibt erhalten.')) return;
+    await discardJob(record.id);
     navigate(hrefFor.history);
   };
 
   return (
     <div className="page">
-      <a className="back" href={hrefFor.history}>
-        <Icon name="back" size={20} /> Verlauf
-      </a>
+      <Back />
 
       <div className="stack">
-        <h1>{record.title}</h1>
+        <h1>{title}</h1>
         <div className="meta-chips">
-          <span className="pill">
-            {new Date(`${record.date}T12:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' })}, {record.time}
-          </span>
-          <span className="pill">{record.durationMin} min</span>
+          {info?.user && <span className={`who-chip u-${info.user.toLowerCase()}`}>{info.user}</span>}
+          {date && (
+            <span className="pill">
+              {new Date(`${date}T12:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' })}, {time}
+            </span>
+          )}
+          {transcript && <span className="pill">{transcript.meta.durationMin} min</span>}
           {transcript?.meta.language && <span className="pill">{transcript.meta.language.toUpperCase()}</span>}
           {transcript?.meta.model && <span className="pill">{transcript.meta.model}</span>}
+          {record &&
+            (record.githubPath ? (
+              <span className="pill ok">
+                <Icon name="check" size={13} /> Im Speicher
+              </span>
+            ) : (
+              <span className="pill warn">Noch nicht im Speicher</span>
+            ))}
         </div>
       </div>
-
-      <VaultBox record={record} />
 
       <div className="actions">
         <button className="btn-small btn-ghost" onClick={() => void copy()}>
@@ -146,16 +193,18 @@ export function TranscriptPage({ id }: { id: string }) {
         </section>
       ) : (
         <pre className="card" style={{ whiteSpace: 'pre-wrap' }}>
-          {record.markdown}
+          {markdown}
         </pre>
       )}
 
-      <div className="danger-zone">
-        <button className="btn-small btn-danger" onClick={() => void remove()}>
-          <Icon name="trash" size={18} />
-          Vom Gerät löschen
-        </button>
-      </div>
+      {record && (
+        <div className="danger-zone">
+          <button className="btn-small btn-danger" onClick={() => void remove()}>
+            <Icon name="trash" size={18} />
+            Vom Handy löschen
+          </button>
+        </div>
+      )}
     </div>
   );
 }

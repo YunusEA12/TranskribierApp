@@ -9,12 +9,11 @@ export type EngineId = 'flash' | 'transcribe';
 export interface Settings {
   userName: string;
   geminiKey: string;
-  sharedVault: string; // name of the Obsidian vault Yunus and Calvin share
-  // Optional backup of every transcript into a GitHub repo.
+  // Shared storage: a private GitHub repo both phones write to. Yunus creates the token; Calvin gets
+  // repo and token by scanning an invite QR code in Yunus' app.
   githubToken: string;
   vaultRepo: string; // "owner/repo"
   vaultBranch: string;
-  vaultBaseDir: string; // "" or a folder inside the repo
   engine: EngineId;
   flashModel: string;
   transcribeModel: string;
@@ -26,11 +25,9 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   userName: '',
   geminiKey: '',
-  sharedVault: 'Mitschrift',
   githubToken: '',
-  vaultRepo: '',
+  vaultRepo: 'YunusEA12/mitschrift-daten',
   vaultBranch: 'main',
-  vaultBaseDir: '',
   engine: 'flash',
   flashModel: 'gemini-3.8-flash',
   transcribeModel: 'gemini-3.5-transcribe',
@@ -51,7 +48,8 @@ export function getSettings(): Settings {
     // Corrupt or unavailable storage: fall back to defaults.
   }
   cached = { ...DEFAULT_SETTINGS, ...stored };
-  if (!cached.sharedVault.trim()) cached.sharedVault = DEFAULT_SETTINGS.sharedVault;
+  if (!cached.vaultRepo.trim()) cached.vaultRepo = DEFAULT_SETTINGS.vaultRepo;
+  if (!cached.vaultBranch.trim()) cached.vaultBranch = DEFAULT_SETTINGS.vaultBranch;
   return cached;
 }
 
@@ -74,15 +72,19 @@ export function useSettings(): Settings {
 
 export const MISSING_KEY = 'Gemini-API-Key';
 export const MISSING_NAME = 'Wer bist du?';
+export const MISSING_STORAGE = 'Gemeinsamer Speicher';
 
-/** What is still missing before recordings are processed: the key, and who records (decides the vault folder). */
+export const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+
+export function storageConnected(s: Settings): boolean {
+  return Boolean(s.githubToken.trim() && REPO_RE.test(s.vaultRepo.trim()));
+}
+
+/** What is still missing before recordings are processed: key, who records (decides the folder), and the shared storage. */
 export function missingSettings(s: Settings): string[] {
   const missing: string[] = [];
   if (!s.geminiKey.trim()) missing.push(MISSING_KEY);
   if (!userFolder(s.userName)) missing.push(MISSING_NAME);
+  if (!storageConnected(s)) missing.push(MISSING_STORAGE);
   return missing;
-}
-
-export function githubBackupEnabled(s: Settings): boolean {
-  return Boolean(s.githubToken.trim() && /^[\w.-]+\/[\w.-]+$/.test(s.vaultRepo.trim()));
 }

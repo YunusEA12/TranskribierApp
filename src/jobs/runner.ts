@@ -2,13 +2,13 @@
 
 import { db } from '../db/db';
 import { isNetworkError, toUserMessage, UserError } from '../lib/errors';
-import { getSettings, githubBackupEnabled, missingSettings } from '../settings/settingsStore';
+import { getSettings, missingSettings, storageConnected } from '../settings/settingsStore';
 import { createEngine } from '../transcription/createEngine';
 import { createGeminiClient, deleteUpload, uploadAudio } from '../transcription/gemini';
 import type { AudioSource, TranscriptMeta } from '../types';
 import { createTranscript, toMarkdown } from '../vault/markdown';
-import { transcriptPath } from '../vault/paths';
-import { backupTranscript, clientFromSettings } from '../vault/vaultRepo';
+import { parseTranscriptPath, transcriptPath } from '../vault/paths';
+import { clientFromSettings, saveTranscript } from '../vault/vaultRepo';
 import {
   currentStep, isRunnable, newJob, retry, savingDone, stepFailed, stepStarted, transcriptionDone, uploadDone,
   type Job, type Step,
@@ -103,9 +103,35 @@ async function runAll(): Promise<void> {
     if (missingSettings(getSettings()).length || !navigator.onLine) return;
     const jobs = await db.jobs.orderBy('recordedAt').filter((j) => isRunnable(j) && !attempted.has(j.id)).toArray();
     const job = jobs[0];
-    if (!job) return;
+    if (!job) break;
     attempted.add(job.id);
     await runJob(job.id);
+  }
+  await uploadPendingTranscripts();
+}
+
+/** Writes a transcript to the shared storage and records that it is there. */
+async function uploadTranscript(id: string, path: string, markdown: string, title: string): Promise<void> {
+  const sha = await saveTranscript(clientFromSettings(getSettings()), path, markdown, title);
+  const info = parseTranscriptPath(path);
+  await db.transaction('rw', [db.transcripts, db.remote, db.remoteFiles], async () => {
+    await db.transcripts.update(id, { githubPath: path });
+    if (info) await db.remote.put({ ...info, sha });
+    await db.remoteFiles.put({ path, sha, text: markdown });
+  });
+}
+
+/** Transcripts made before the storage was connected (or whose upload failed) are sent afterwards. */
+async function uploadPendingTranscripts(): Promise<void> {
+  if (!storageConnected(getSettings())) return;
+  const pending = await db.transcripts.filter((t) => !t.githubPath).toArray();
+  for (const t of pending) {
+    try {
+      await uploadTranscript(t.id, t.path, t.markdown, t.title);
+    } catch (e) {
+      console.warn(`Upload of ${t.path} failed; will retry later`, e);
+      return;
+    }
   }
 }
 
@@ -163,7 +189,7 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       });
       const { meta } = transcript;
       const markdown = toMarkdown(transcript);
-      // The path stays fixed across retries, so handing it to Obsidian again overwrites instead of duplicating.
+      // The path stays fixed across retries, so a second upload overwrites instead of duplicating.
       const path = job.vaultPath ?? (await uniquePath(job.id, meta, settings.userName));
       const existing = await db.transcripts.get(job.id);
       await db.transaction('rw', [db.jobs, db.transcripts], async () => {
@@ -181,10 +207,7 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
         });
         await db.jobs.update(job.id, { vaultPath: path });
       });
-      if (githubBackupEnabled(settings)) {
-        const githubPath = await backupTranscript(clientFromSettings(settings), settings.vaultBaseDir, path, markdown, meta.title);
-        await db.transcripts.update(job.id, { githubPath });
-      }
+      await uploadTranscript(job.id, path, markdown, meta.title);
       await db.jobs.update(job.id, savingDone(path, Date.now()));
       // The transcript is safe on the device; the copy at Google is no longer needed (CLAUDE.md rule 8).
       if (job.upload) await deleteUpload(ai, job.upload.name);

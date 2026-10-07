@@ -6,7 +6,7 @@ import { formatClock } from '../lib/time';
 import { importAudioFile } from '../recording/importAudio';
 import { interruptedSessions, recorder, recoverSession, type RecorderState } from '../recording/recorder';
 import { hrefFor, navigate } from '../router';
-import { MISSING_KEY, MISSING_NAME, missingSettings, useSettings } from '../settings/settingsStore';
+import { missingSettings, useSettings } from '../settings/settingsStore';
 
 const BARS = 40;
 const SPEAKER_OPTIONS = [undefined, 1, 2, 3, 4, 5] as const;
@@ -101,18 +101,11 @@ export function RecordPage() {
         <h1>Aufnahme</h1>
       </div>
 
-      {missingSettings(settings).includes(MISSING_KEY) && (
+      {missingSettings(settings).length > 0 && (
         <a className="banner" href={hrefFor.settings}>
           <Icon name="key" />
-          <span>Noch kein API-Key eingetragen. Aufnehmen geht trotzdem, transkribiert wird danach.</span>
-          <span className="go">Eintragen</span>
-        </a>
-      )}
-      {!missingSettings(settings).includes(MISSING_KEY) && missingSettings(settings).includes(MISSING_NAME) && (
-        <a className="banner" href={hrefFor.settings}>
-          <Icon name="person" />
-          <span>Wähle einmal, ob du Yunus oder Calvin bist. Danach geht es los.</span>
-          <span className="go">Wählen</span>
+          <span>Noch einrichten: {missingSettings(settings).join(', ')}. Aufnehmen geht schon, verarbeitet wird danach.</span>
+          <span className="go">Einrichten</span>
         </a>
       )}
 

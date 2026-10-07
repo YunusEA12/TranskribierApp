@@ -1,19 +1,22 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { SaveToObsidianButton } from '../components/SaveToObsidianButton';
-import { db, type TranscriptRecord } from '../db/db';
+import { db } from '../db/db';
 import type { Job, Step } from '../jobs/queue';
 import { discardJob, retryJob } from '../jobs/runner';
+import { toUserMessage } from '../lib/errors';
 import { formatClock, localDate } from '../lib/time';
 import { hrefFor } from '../router';
-import { missingSettings, useSettings } from '../settings/settingsStore';
+import { missingSettings, storageConnected, useSettings } from '../settings/settingsStore';
+import { parseTranscriptPath } from '../vault/paths';
+import { clientFromSettings, listTranscripts } from '../vault/vaultRepo';
 
 const STEPS: Array<{ step: Step; label: string }> = [
   { step: 'uploading', label: 'Hochladen' },
   { step: 'transcribing', label: 'Transkribieren' },
   { step: 'saving', label: 'Speichern' },
 ];
+const FILTERS = ['Alle', 'Yunus', 'Calvin'] as const;
 
 function stepClass(job: Job, step: Step): string {
   const order = STEPS.map((s) => s.step);
@@ -84,32 +87,68 @@ function dayLabel(date: string): string {
   return new Date(`${date}T12:00`).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-function TranscriptCard({ t }: { t: TranscriptRecord }) {
+/** One row of the shared history: a transcript made on this phone, or one from the shared storage. */
+interface Item {
+  key: string;
+  href: string;
+  title: string;
+  date: string;
+  time: string;
+  user: string;
+  durationMin?: number;
+  speakerCount?: number;
+  pendingUpload: boolean;
+}
+
+function TranscriptCard({ item }: { item: Item }) {
   return (
-    <li className="card tcard">
-      <a href={hrefFor.transcript(t.id)}>
-        <span className="title">{t.title}</span>
+    <li>
+      <a className="card tcard" href={item.href}>
+        <span className="title">{item.title}</span>
         <span className="meta">
-          <span>{t.time}</span>
-          <span>{t.durationMin} min</span>
-          <span>{t.speakerCount} Sprecher</span>
-          {t.obsidianAt && (
-            <span className="pill vault">
-              <Icon name="check" size={13} /> In Obsidian
-            </span>
-          )}
+          {item.user && <span className={`who-chip u-${item.user.toLowerCase()}`}>{item.user}</span>}
+          <span>{item.time}</span>
+          {item.durationMin !== undefined && <span>{item.durationMin} min</span>}
+          {item.speakerCount !== undefined && <span>{item.speakerCount} Sprecher</span>}
+          {item.pendingUpload && <span className="pill warn">Noch nicht im Speicher</span>}
         </span>
       </a>
-      {!t.obsidianAt && <SaveToObsidianButton record={t} small />}
     </li>
   );
 }
 
 export function HistoryPage() {
   const settings = useSettings();
+  const connected = storageConnected(settings);
   const jobs = useLiveQuery(() => db.jobs.orderBy('recordedAt').reverse().filter((j) => j.status !== 'done').toArray(), []);
-  const transcripts = useLiveQuery(() => db.transcripts.orderBy('createdAt').reverse().toArray(), []);
+  const local = useLiveQuery(() => db.transcripts.toArray(), []);
+  const remote = useLiveQuery(() => db.remote.toArray(), []);
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('Alle');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const refresh = useCallback(async () => {
+    if (!connected) return;
+    setLoading(true);
+    setError('');
+    try {
+      const list = await listTranscripts(clientFromSettings(settings));
+      await db.transaction('rw', db.remote, async () => {
+        await db.remote.clear();
+        await db.remote.bulkPut(list);
+      });
+    } catch (e) {
+      setError(toUserMessage(e, 'github'));
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, settings.githubToken, settings.vaultRepo, settings.vaultBranch]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const missing = missingSettings(settings);
   const waitingReason = missing.length
@@ -118,20 +157,54 @@ export function HistoryPage() {
       ? 'Offline. Startet automatisch, sobald du wieder online bist.'
       : '';
 
-  const q = query.trim().toLowerCase();
-  const list = (transcripts ?? [])
-    .filter((t) => !q || t.title.toLowerCase().includes(q) || t.markdown.toLowerCase().includes(q))
-    .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
-  const groups = new Map<string, TranscriptRecord[]>();
-  for (const t of list) groups.set(t.date, [...(groups.get(t.date) ?? []), t]);
+  // Transcripts from this phone win over their copy in the storage (they have audio and duration).
+  const byPath = new Map<string, Item>();
+  for (const r of remote ?? []) {
+    byPath.set(r.path, { key: r.path, href: hrefFor.transcript(`r:${r.path}`), title: r.title, date: r.date, time: r.time, user: r.user, pendingUpload: false });
+  }
+  for (const t of local ?? []) {
+    byPath.set(t.path, {
+      key: t.path,
+      href: hrefFor.transcript(t.id),
+      title: t.title,
+      date: t.date,
+      time: t.time,
+      user: parseTranscriptPath(t.path)?.user ?? '',
+      durationMin: t.durationMin,
+      speakerCount: t.speakerCount,
+      pendingUpload: !t.githubPath,
+    });
+  }
 
-  const nothingYet = transcripts?.length === 0 && jobs?.length === 0;
+  const q = query.trim().toLowerCase();
+  const items = [...byPath.values()]
+    .filter((i) => filter === 'Alle' || i.user === filter)
+    .filter((i) => !q || i.title.toLowerCase().includes(q))
+    .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  const groups = new Map<string, Item[]>();
+  for (const i of items) groups.set(i.date, [...(groups.get(i.date) ?? []), i]);
+
+  const nothingYet = byPath.size === 0 && jobs?.length === 0 && !loading;
 
   return (
     <div className="page">
       <div className="page-head">
         <h1>Verlauf</h1>
+        {connected && (
+          <button className="btn-small btn-ghost" onClick={() => void refresh()} disabled={loading}>
+            <Icon name="retry" size={18} />
+            {loading ? 'Lädt …' : 'Aktualisieren'}
+          </button>
+        )}
       </div>
+
+      {!connected && (
+        <a className="banner" href={hrefFor.settings}>
+          <Icon name="vault" />
+          <span>Noch nicht mit dem gemeinsamen Speicher verbunden. Dann seht ihr hier beide alles.</span>
+          <span className="go">Verbinden</span>
+        </a>
+      )}
 
       {jobs && jobs.length > 0 && (
         <section className="stack" aria-label="In Arbeit">
@@ -142,6 +215,15 @@ export function HistoryPage() {
             ))}
           </ul>
         </section>
+      )}
+
+      {error && (
+        <p className="error-text">
+          {error}{' '}
+          <button className="btn-small btn-ghost" onClick={() => void refresh()}>
+            Erneut versuchen
+          </button>
+        </p>
       )}
 
       {nothingYet && (
@@ -157,25 +239,34 @@ export function HistoryPage() {
         </div>
       )}
 
-      {transcripts && transcripts.length > 0 && (
-        <label className="search">
-          <Icon name="search" size={18} />
-          <input id="history-search" type="search" placeholder="In Titeln und Texten suchen" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </label>
+      {byPath.size > 0 && (
+        <>
+          <div className="chips" role="group" aria-label="Filter">
+            {FILTERS.map((f) => (
+              <button key={f} className="chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                {f}
+              </button>
+            ))}
+          </div>
+          <label className="search">
+            <Icon name="search" size={18} />
+            <input id="history-search" type="search" placeholder="Titel suchen" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </label>
+        </>
       )}
 
-      {[...groups.entries()].map(([date, items]) => (
+      {[...groups.entries()].map(([date, list]) => (
         <section key={date} className="stack">
           <span className="eyebrow day">{dayLabel(date)}</span>
           <ul className="cards">
-            {items.map((t) => (
-              <TranscriptCard key={t.id} t={t} />
+            {list.map((i) => (
+              <TranscriptCard key={i.key} item={i} />
             ))}
           </ul>
         </section>
       ))}
 
-      {q && list.length === 0 && <p className="muted">Nichts gefunden.</p>}
+      {byPath.size > 0 && items.length === 0 && <p className="muted">Nichts gefunden.</p>}
     </div>
   );
 }

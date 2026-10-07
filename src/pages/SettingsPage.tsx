@@ -1,15 +1,21 @@
-import { useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { Icon } from '../components/Icon';
+import { InviteQr } from '../components/InviteQr';
+import { QrScanner } from '../components/QrScanner';
 import { kickRunner } from '../jobs/runner';
-import { testConnections, type CheckResult } from '../settings/connectionTest';
 import { APP_VERSION, BUILD_TIME, checkForUpdate, installUpdate, useUpdateReady } from '../pwa/update';
-import { DEFAULT_SETTINGS, saveSettings, useSettings, type Settings } from '../settings/settingsStore';
+import { testGemini, testStorage, type CheckResult } from '../settings/connectionTest';
+import { decodeInvite, encodeInvite } from '../settings/invite';
+import { DEFAULT_SETTINGS, getSettings, saveSettings, storageConnected, useSettings, type Settings } from '../settings/settingsStore';
 import { userFolder } from '../vault/paths';
 
 const PEOPLE = ['Yunus', 'Calvin'];
-const CHECKED_KEYS = new Set<keyof Settings>(['geminiKey', 'engine', 'flashModel', 'transcribeModel', 'fallbackModel', 'githubToken', 'vaultRepo', 'vaultBranch']);
+const CHECKED_KEYS = new Set<keyof Settings>(['geminiKey', 'engine', 'flashModel', 'transcribeModel', 'fallbackModel']);
+const REPO_NAME = DEFAULT_SETTINGS.vaultRepo.split('/')[1]!;
+const NEW_REPO_URL = `https://github.com/new?name=${REPO_NAME}&visibility=private&description=${encodeURIComponent('Gemeinsamer Speicher der Mitschrift-App')}`;
+const NEW_TOKEN_URL = `https://github.com/settings/personal-access-tokens/new?name=Mitschrift&description=${encodeURIComponent('Mitschrift-App')}&expires_in=366&contents=write`;
 
-function Checks({ checks, onFix }: { checks: CheckResult[]; onFix: (c: CheckResult) => void }) {
+function Checks({ checks, onFix }: { checks: CheckResult[]; onFix?: (c: CheckResult) => void }) {
   return (
     <ul className="checks">
       {checks.map((c) => (
@@ -19,7 +25,7 @@ function Checks({ checks, onFix }: { checks: CheckResult[]; onFix: (c: CheckResu
           </span>
           <span>
             <b>{c.label}:</b> {c.message}{' '}
-            {c.fix && (
+            {c.fix && onFix && (
               <button className="btn-small btn-ghost" onClick={() => onFix(c)}>
                 Übernehmen
               </button>
@@ -28,6 +34,176 @@ function Checks({ checks, onFix }: { checks: CheckResult[]; onFix: (c: CheckResu
         </li>
       ))}
     </ul>
+  );
+}
+
+const ext = (href: string, children: ReactNode) => (
+  <a href={href} target="_blank" rel="noopener noreferrer">
+    {children}
+  </a>
+);
+
+function StorageCard() {
+  const settings = useSettings();
+  const connected = storageConnected(settings);
+  const [mode, setMode] = useState<'idle' | 'setup' | 'scan' | 'invite'>('idle');
+  const [token, setToken] = useState('');
+  const [pasted, setPasted] = useState('');
+  const [check, setCheck] = useState<CheckResult | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const connect = useCallback(async (patch: Partial<Settings>) => {
+    setBusy(true);
+    setCheck(null);
+    saveSettings(patch);
+    const result = await testStorage(getSettings());
+    setCheck(result);
+    setBusy(false);
+    if (result.ok) {
+      setMode('idle');
+      kickRunner();
+    }
+  }, []);
+
+  const onScan = useCallback(
+    (text: string) => {
+      const invite = decodeInvite(text);
+      setMode('idle');
+      if (!invite) {
+        setCheck({ label: 'Einladung', ok: false, message: 'Das ist kein Einladungs-Code der Mitschrift-App.' });
+        return;
+      }
+      void connect({ githubToken: invite.token, vaultRepo: invite.repo, vaultBranch: invite.branch });
+    },
+    [connect],
+  );
+
+  const isCalvin = settings.userName === 'Calvin';
+
+  return (
+    <section className="card stack" aria-labelledby="storage-title">
+      <div className="title-row row">
+        <Icon name="vault" />
+        <h2 id="storage-title">Gemeinsamer Speicher</h2>
+        {connected ? <span className="pill ok">verbunden</span> : <span className="pill warn">nicht verbunden</span>}
+      </div>
+      <small>
+        Hier landen die Transkripte von euch beiden, jeder in seinem Ordner. In der App seht ihr beide alles. Einmal einrichten, danach
+        nie wieder.
+      </small>
+
+      {connected && mode !== 'invite' && (
+        <>
+          <p>
+            Verbunden mit <b>{settings.vaultRepo.split('/')[1]}</b>.
+          </p>
+          <div className="actions">
+            <button className="btn-vault" onClick={() => setMode('invite')}>
+              Calvin einladen (QR-Code)
+            </button>
+            <button className="btn-ghost" disabled={busy} onClick={() => void connect({})}>
+              Verbindung prüfen
+            </button>
+          </div>
+        </>
+      )}
+
+      {connected && mode === 'invite' && (
+        <div className="stack invite">
+          <InviteQr text={encodeInvite({ repo: settings.vaultRepo, branch: settings.vaultBranch, token: settings.githubToken })} />
+          <small>
+            Calvin öffnet in seiner Mitschrift-App <b>Einstellungen → Gemeinsamer Speicher → Einladung scannen</b> und hält die Kamera
+            auf diesen Code. Den Code nicht fotografieren oder verschicken: Er enthält den Schlüssel zum Speicher.
+          </small>
+          <button className="btn-ghost" onClick={() => setMode('idle')}>
+            Fertig
+          </button>
+        </div>
+      )}
+
+      {!connected && mode === 'idle' && (
+        <div className="actions">
+          <button className={isCalvin ? 'btn-ghost' : 'btn-vault'} onClick={() => setMode('setup')}>
+            Ich richte ihn ein (Yunus)
+          </button>
+          <button className={isCalvin ? 'btn-vault' : 'btn-ghost'} onClick={() => setMode('scan')}>
+            Einladung scannen (Calvin)
+          </button>
+        </div>
+      )}
+
+      {!connected && mode === 'setup' && (
+        <div className="stack">
+          <ol className="step-list setup-steps">
+            <li>
+              {ext(NEW_REPO_URL, <b>Speicher bei GitHub anlegen</b>)}: Der Name „{REPO_NAME}“ und „Private“ sind schon ausgefüllt. Nur unten auf
+              „Create repository“ tippen.
+            </li>
+            <li>
+              {ext(NEW_TOKEN_URL, <b>Schlüssel erstellen</b>)}: Bei „Repository access“ <b>Only select repositories</b> → „{REPO_NAME}“
+              wählen. Bei „Permissions“ → <b>Contents</b> → <b>Read and write</b>. Dann „Generate token“ und den Schlüssel kopieren.
+            </li>
+            <li>Schlüssel hier einfügen:</li>
+          </ol>
+          <input
+            id="storage-token"
+            type="password"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            placeholder="github_pat_…"
+            value={token}
+            onChange={(e) => setToken(e.target.value.trim())}
+          />
+          <div className="actions">
+            <button className="btn-vault" disabled={!token || busy} onClick={() => void connect({ githubToken: token })}>
+              {busy ? 'Verbinde …' : 'Verbinden'}
+            </button>
+            <button className="btn-ghost" onClick={() => setMode('idle')}>
+              Zurück
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!connected && mode === 'scan' && (
+        <>
+          <QrScanner onResult={onScan} onCancel={() => setMode('idle')} />
+          <details>
+            <summary>Kamera geht nicht? Code einfügen</summary>
+            <div className="stack">
+              <input
+                id="invite-code"
+                type="text"
+                autoCapitalize="off"
+                spellCheck={false}
+                placeholder="MITSCHRIFT1:…"
+                value={pasted}
+                onChange={(e) => setPasted(e.target.value)}
+              />
+              <button className="btn-vault" disabled={!pasted.trim()} onClick={() => onScan(pasted)}>
+                Übernehmen
+              </button>
+            </div>
+          </details>
+        </>
+      )}
+
+      {check && <Checks checks={[check]} />}
+      {connected && (
+        <button
+          className="btn-small btn-danger"
+          onClick={() => {
+            if (confirm('Verbindung zum gemeinsamen Speicher auf diesem Handy trennen? Die Transkripte im Speicher bleiben erhalten.')) {
+              saveSettings({ githubToken: '' });
+              setCheck(null);
+            }
+          }}
+        >
+          Verbindung trennen
+        </button>
+      )}
+    </section>
   );
 }
 
@@ -67,7 +243,7 @@ export function SettingsPage() {
     setTesting(true);
     setChecks(null);
     try {
-      const report = await testConnections(settings);
+      const report = await testGemini(settings);
       setChecks(report.checks);
       setModels(report.models);
       if (report.checks.every((c) => c.ok)) kickRunner();
@@ -91,7 +267,7 @@ export function SettingsPage() {
           <h2 id="key-title">Gemini-API-Key</h2>
           {allOk ? <span className="pill ok">geprüft</span> : hasKey ? <span className="pill">eingetragen</span> : <span className="pill warn">fehlt</span>}
         </div>
-        <p className="muted">Zusammen mit „Wer bist du?“ das Einzige, was die App braucht. Der Key bleibt auf diesem Gerät.</p>
+        <p className="muted">Jeder nutzt seinen eigenen Key. Er bleibt auf diesem Gerät.</p>
         <ol className="step-list">
           <li>
             Key bei Google holen:{' '}
@@ -117,11 +293,6 @@ export function SettingsPage() {
           {testing ? 'Prüfe …' : 'Key prüfen'}
         </button>
         {checks && <Checks checks={checks} onFix={(c) => c.fix && set(c.fix.key, c.fix.value)} />}
-        {allOk && (
-          <p className="ok-text">
-            {userFolder(settings.userName) ? 'Alles bereit. Unter „Aufnahme“ kannst du loslegen.' : 'Key ok. Jetzt unten noch wählen, wer du bist.'}
-          </p>
-        )}
       </section>
 
       <section className="card stack" aria-labelledby="who-title">
@@ -146,10 +317,12 @@ export function SettingsPage() {
         </div>
         <small>
           {userFolder(settings.userName)
-            ? `Deine Notizen landen im gemeinsamen Vault „${settings.sharedVault}“ im Ordner „Transkripte/${userFolder(settings.userName)}“.`
-            : 'Einmal antippen. Davon hängt ab, in welchem Ordner deine Notizen im gemeinsamen Vault landen.'}
+            ? `Deine Transkripte landen im Ordner „${userFolder(settings.userName)}“.`
+            : 'Einmal antippen. Davon hängt ab, in welchem Ordner deine Transkripte landen.'}
         </small>
       </section>
+
+      <StorageCard />
 
       <details className="card">
         <summary>Weitere Einstellungen</summary>
@@ -178,18 +351,9 @@ export function SettingsPage() {
             Füllwörter („äh“, „ähm“) entfernen
           </label>
 
-          <span className="eyebrow sub-head">Obsidian</span>
-          {text('sharedVault', 'Name des gemeinsamen Vaults', {
-            placeholder: DEFAULT_SETTINGS.sharedVault,
-            hint: 'Muss auf beiden Handys genau so heißen wie der Vault in Obsidian. Normalerweise nicht ändern.',
-          })}
-
-          <span className="eyebrow sub-head">Sicherung auf GitHub (optional)</span>
-          <small>Nur nötig, wenn Transkripte zusätzlich in einem GitHub-Repo landen sollen. Sonst leer lassen.</small>
-          {text('vaultRepo', 'Repo', { placeholder: 'github-name/repo-name' })}
-          {text('githubToken', 'Token', { secret: true, hint: 'Fine-grained Token nur für dieses Repo, Contents: Read and write' })}
+          <span className="eyebrow sub-head">Speicher</span>
+          {text('vaultRepo', 'Repo', { placeholder: DEFAULT_SETTINGS.vaultRepo, hint: 'Normalerweise nicht ändern.' })}
           {text('vaultBranch', 'Branch', { placeholder: 'main' })}
-          {text('vaultBaseDir', 'Unterordner im Repo', { placeholder: 'leer = oberste Ebene' })}
         </div>
       </details>
 
@@ -224,8 +388,8 @@ export function SettingsPage() {
       </section>
 
       <p className="muted" style={{ fontSize: '0.85rem' }}>
-        Alles wird nur auf diesem Gerät gespeichert. Auf dem iPhone haben die App vom Home-Bildschirm und Safari getrennten Speicher: hier in
-        der App vom Home-Bildschirm eintragen.
+        Key und Schlüssel werden nur auf diesem Gerät gespeichert. Auf dem iPhone haben die App vom Home-Bildschirm und Safari getrennten
+        Speicher: hier in der App vom Home-Bildschirm eintragen.
       </p>
     </div>
   );

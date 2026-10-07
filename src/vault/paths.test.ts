@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeBaseDir, sanitizeTitle, transcriptPath, userFolder } from './paths';
+import { normalizeBaseDir, parseTranscriptPath, sanitizeTitle, transcriptPath, userFolder } from './paths';
 
 describe('sanitizeTitle', () => {
   it('removes forbidden characters and collapses whitespace', () => {
@@ -47,5 +47,29 @@ describe('userFolder', () => {
     expect(userFolder(' Jörg  M. ')).toBe('Jörg M.');
     expect(userFolder('a/b\\c')).toBe('abc');
     expect(userFolder('')).toBe('');
+  });
+});
+
+describe('parseTranscriptPath', () => {
+  it('reads person, date, time and title', () => {
+    expect(parseTranscriptPath('Transkripte/Yunus/2026/2026-10-07 0841 Über Öl (2).md')).toEqual({
+      path: 'Transkripte/Yunus/2026/2026-10-07 0841 Über Öl (2).md',
+      user: 'Yunus',
+      date: '2026-10-07',
+      time: '08:41',
+      title: 'Über Öl',
+    });
+  });
+  it('accepts files without a person folder', () => {
+    expect(parseTranscriptPath('Transkripte/2026/2026-10-07 0841 A.md')?.user).toBe('');
+  });
+  it('ignores other files', () => {
+    expect(parseTranscriptPath('README.md')).toBeNull();
+    expect(parseTranscriptPath('Transkripte/Yunus/notiz.md')).toBeNull();
+    expect(parseTranscriptPath('Transkripte/a/b/c/2026-10-07 0841 A.md')).toBeNull();
+  });
+  it('round-trips with transcriptPath', () => {
+    const p = transcriptPath('2026-10-07', '08:41', 'Ärger: über [Öl]', { user: 'Calvin' });
+    expect(parseTranscriptPath(p)).toMatchObject({ user: 'Calvin', date: '2026-10-07', time: '08:41', title: 'Ärger über Öl' });
   });
 });
