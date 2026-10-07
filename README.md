@@ -8,15 +8,13 @@ Eine Transkribier-App für Calvin und Yunus: aufnehmen oder Audiodatei importier
 
 ## Einrichten
 
-Nur ein Schritt ist Pflicht: der eigene **Gemini-API-Key**.
+Pflicht sind nur zwei Dinge: der eigene **Gemini-API-Key** und die Wahl **Yunus oder Calvin**.
 
 1. App-Link auf dem Handy öffnen und zum Home-Bildschirm hinzufügen (iPhone: Safari → Teilen → „Zum Home-Bildschirm“; Android: Chrome-Menü → „App installieren“).
 2. In der App vom Home-Bildschirm: **Einstellungen** → Key holen über den Link (aistudio.google.com/apikey → „Create API key“) → einfügen → **Key prüfen**.
-3. Unter „Wer nimmt auf?“ den eigenen Namen antippen. Davon hängt der eigene Ordner im Vault ab.
+3. Unter „Wer bist du?“ **Yunus** oder **Calvin** antippen.
 
-**Obsidian:** Die Obsidian-App muss auf dem Gerät installiert sein. Beim ersten „In Obsidian speichern“ fragt die App einmal nach dem Namen des Vaults. Die Notiz landet im Vault unter `Transkripte/<Name>/<Jahr>/`, also jeder in seinem eigenen Ordner.
-
-**Gemeinsamer Vault:** Wenn Yunus und Calvin in denselben Vault speichern wollen, muss Obsidian diesen Vault zwischen ihren Geräten synchronisieren, z. B. mit Obsidian Sync (geteilter Vault). Die App braucht dafür nur den Vault-Namen.
+**Obsidian (einmalig):** Beide haben in Obsidian einen Vault namens **„Mitschrift“**, der zwischen euren Handys synchronisiert wird (z. B. Obsidian Sync mit geteiltem Vault). Die App speichert immer dorthin: Yunus' Notizen nach `Transkripte/Yunus/<Jahr>/`, Calvins nach `Transkripte/Calvin/<Jahr>/`. In Obsidian sieht jeder beide Ordner.
 
 **Ersatzmodell:** Im kostenlosen Kontingent hat jedes Modell ein Tageslimit. Unter „Weitere Einstellungen → Ersatzmodell“ kann ein schwächeres Modell (z. B. „flash-lite“) einspringen, wenn das Limit erreicht ist.
 
@@ -28,7 +26,7 @@ Der Key bleibt nur auf dem Gerät. Nie in Chats, Issues oder ins Repo schreiben.
 
 1. **Key:** „Key prüfen“ zeigt grüne Haken.
 2. **Kurze Aufnahme:** 1–2 Minuten mit zwei Personen, dann „Fertig“. Im Verlauf laufen die Schritte Hochladen → Transkribieren → Speichern durch.
-3. **Obsidian:** Transkript öffnen → „In Obsidian speichern“ → Vault-Name eintragen → Obsidian öffnet sich mit der Notiz.
+3. **Obsidian:** Im Verlauf „In Obsidian speichern“ → Obsidian öffnet sich mit der Notiz im Vault „Mitschrift“.
 4. **Import:** Eine Datei aus der Sprachmemo-/Rekorder-App importieren.
 5. **Offline:** Flugmodus an, aufnehmen, stoppen. Der Job wartet. Flugmodus aus: Er startet von selbst.
 6. **Absturz:** Während einer Aufnahme die App hart schließen. Beim nächsten Öffnen bietet „Aufnahme“ an, sie wiederherzustellen.

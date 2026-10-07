@@ -64,7 +64,7 @@ Job-Zustände: `recorded → uploading → transcribing → saving → done`, je
 9. **Aufnahmen dürfen nie verloren gehen.** Erst lokal speichern, dann verarbeiten. Ein Fehler bei Gemini oder GitHub lässt die Aufnahme unangetastet.
 10. **Nichts von Plaud übernehmen** außer der Idee: keine Namen, Texte, Logos oder Screenshots.
 11. **Design gehört dazu.** Die Nutzer wollen ein ansprechendes UI (seit 2026-10-07). Farben nur über die Tokens in `src/styles.css`, beide Themes (hell/dunkel), Systemschriften, Handy zuerst.
-12. **Nur der API-Key ist Pflicht.** Keine neue Pflicht-Einstellung einführen, ohne nachzufragen.
+12. **Pflicht sind nur der API-Key und „Wer bist du?“ (Yunus/Calvin).** Der gemeinsame Vault heißt fest „Mitschrift“. Keine neue Pflicht-Einstellung einführen, ohne nachzufragen.
 
 ## Arbeitsweise
 
