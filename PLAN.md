@@ -400,6 +400,7 @@ Getroffene Entscheidungen hier mit Datum eintragen.
 | 2026-10-07 | Gemeinsamer Vault („unser Vault“) ist möglich: Die App braucht nur den Vault-Namen; synchronisiert wird über Obsidian selbst. Ersetzt Entscheidung 2. |
 | 2026-10-07 | Ein gemeinsamer, synchronisierter Vault, aber getrennte Ordner: Notizen landen unter `Transkripte/<Name>/<Jahr>/`. Der Name kommt aus „Wer nimmt auf?“ und bleibt optional (ohne Namen: `Transkripte/<Jahr>/`). Frontmatter und Zeilenformat (4.3) unverändert. |
 | 2026-10-07 | Formatänderung (mit Nutzer abgesprochen): neues Frontmatter-Feld `aliases` mit dem Gemini-Titel. Damit finden Obsidians Schnellsuche und `[[Titel]]`-Links die Notiz über den reinen Titel; der Dateiname behält Datum und Uhrzeit vorne. Ältere Notizen ohne `aliases` bleiben lesbar. |
+| 2026-10-07 | Erster echter Test (iPhone, 19-min-Import): Transkription brach mit „Load failed“ ab, weil iOS die App im Hintergrund pausiert und die offene Anfrage kappt. Lösung: Transkription läuft als Gemini-Interaction mit `background: true`; die App speichert die Id im Job und fragt nur noch kurz nach (Polling). Abbrüche beim Nachfragen werden übersprungen, nach Neustart oder Rückkehr in die App geht es beim selben Auftrag weiter. Hochladen braucht weiterhin die geöffnete App. |
 | 2026-10-07 | Optik: Nutzer wünschen ein schöneres Design. Regel 11 („Funktion vor Optik“) gilt damit nicht mehr absolut. Neues UI mit Tab-Leiste, Rekorder mit Pegelanzeige, Karten im Verlauf, Sprecherfarben. Systemschriften, keine externen Fonts (offline). |
 
 ---
