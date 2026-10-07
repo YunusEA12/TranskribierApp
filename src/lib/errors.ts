@@ -19,6 +19,12 @@ function statusOf(e: unknown): number | undefined {
   return typeof s === 'number' ? s : undefined;
 }
 
+/** The human-readable part of a Google API error, e.g. "API key not valid. Please pass a valid API key." */
+export function googleErrorDetail(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  return /"message":\s*"((?:[^"\\]|\\.)*)"/.exec(raw)?.[1] ?? raw;
+}
+
 function isNetworkError(e: unknown): boolean {
   return e instanceof TypeError && /fetch|network|load failed/i.test(e.message);
 }
@@ -44,11 +50,15 @@ export function toUserMessage(e: unknown, service?: 'github' | 'gemini'): string
   }
   if (svc === 'gemini') {
     switch (status) {
-      case 400:
-        return 'Gemini hat die Anfrage abgelehnt (Format oder Modell-ID). Details im Fehlerprotokoll.';
+      case 400: {
+        // Google answers an invalid key with 400 INVALID_ARGUMENT, not 401.
+        const detail = googleErrorDetail(e);
+        if (/API[_ ]key/i.test(detail)) return 'Gemini lehnt den API-Key ab. Bitte den Key neu kopieren und einfügen.';
+        return `Gemini hat die Anfrage abgelehnt: ${detail}`;
+      }
       case 401:
       case 403:
-        return 'Gemini lehnt den API-Key ab. Bitte Key in den Einstellungen prüfen.';
+        return 'Gemini lehnt den API-Key ab. Bitte den Key neu kopieren und einfügen.';
       case 404:
         return 'Das Gemini-Modell wurde nicht gefunden. Bitte Modell-ID in den Einstellungen prüfen.';
       case 429:
