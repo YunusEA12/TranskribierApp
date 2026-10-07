@@ -7,6 +7,7 @@ import { APP_VERSION, BUILD_TIME, checkForUpdate, installUpdate, useUpdateReady 
 import { testGemini, testStorage, type CheckResult } from '../settings/connectionTest';
 import { decodeInvite, encodeInvite } from '../settings/invite';
 import { DEFAULT_SETTINGS, getSettings, saveSettings, storageConnected, useSettings, type Settings } from '../settings/settingsStore';
+import { diagnoseTranscription, type DiagnosisLine } from '../transcription/diagnose';
 import { userFolder } from '../vault/paths';
 
 const PEOPLE = ['Yunus', 'Calvin'];
@@ -42,6 +43,60 @@ const ext = (href: string, children: ReactNode) => (
     {children}
   </a>
 );
+
+function DiagnosisCard() {
+  const settings = useSettings();
+  const [lines, setLines] = useState<DiagnosisLine[]>([]);
+  const [running, setRunning] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const run = async () => {
+    setLines([]);
+    setRunning(true);
+    try {
+      await diagnoseTranscription(settings, (line) => setLines((l) => [...l, line]));
+    } finally {
+      setRunning(false);
+    }
+  };
+  const copy = async () => {
+    await navigator.clipboard.writeText(lines.map((l) => `${l.ok === null ? '·' : l.ok ? '✓' : '✗'} ${l.text}`).join('\n'));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <section className="card stack" aria-labelledby="diag-title">
+      <div className="row">
+        <Icon name="alert" />
+        <h2 id="diag-title">Fehlersuche</h2>
+      </div>
+      <small>
+        Schickt einen 2-Sekunden-Testton an Gemini und prüft jeden Schritt einzeln. Dauert bis zu 2 Minuten; die App dabei geöffnet
+        lassen. Das Ergebnis enthält keinen Key.
+      </small>
+      <button className="btn-ghost" disabled={running || !settings.geminiKey.trim()} onClick={() => void run()}>
+        {running ? 'Test läuft …' : 'Transkription testen'}
+      </button>
+      {lines.length > 0 && (
+        <ul className="checks">
+          {lines.map((l, i) => (
+            <li key={i} className={l.ok === null ? '' : l.ok ? 'ok' : 'bad'}>
+              <span className="mark">{l.ok === null ? '·' : <Icon name={l.ok ? 'check' : 'alert'} size={14} />}</span>
+              <span>{l.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {lines.length > 0 && !running && (
+        <button className="btn-small btn-ghost" onClick={() => void copy()}>
+          <Icon name={copied ? 'check' : 'copy'} size={18} />
+          {copied ? 'Kopiert' : 'Ergebnis kopieren'}
+        </button>
+      )}
+    </section>
+  );
+}
 
 function StorageCard() {
   const settings = useSettings();
@@ -356,6 +411,8 @@ export function SettingsPage() {
           {text('vaultBranch', 'Branch', { placeholder: 'main' })}
         </div>
       </details>
+
+      <DiagnosisCard />
 
       <section className="card stack" aria-labelledby="version-title">
         <div className="row">

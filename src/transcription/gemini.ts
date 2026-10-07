@@ -6,7 +6,7 @@ import { HttpError, isNetworkError, UserError } from '../lib/errors';
 import type { UploadedAudio } from '../jobs/queue';
 
 export function createGeminiClient(apiKey: string): GoogleGenAI {
-  return new GoogleGenAI({ apiKey: apiKey.trim() });
+  return new GoogleGenAI({ apiKey: apiKey.trim(), httpOptions: { timeout: CLIENT_TIMEOUT_MS } });
 }
 
 /** Re-throws SDK errors with a status as HttpError so the UI can map them. */
@@ -30,9 +30,15 @@ export function geminiMimeType(mimeType: string): string {
 
 const POLL_MS = 2000;
 const MAX_PROCESSING_MS = 10 * 60 * 1000;
+// Every request gets a time limit: on iOS a request can hang forever after the app was in the
+// background, and a hanging request would block all following jobs.
+const CLIENT_TIMEOUT_MS = 20 * 60 * 1000; // default for everything, long enough for big uploads
+const CREATE_TIMEOUT_MS = 90 * 1000;
+const DIRECT_TIMEOUT_MS = 15 * 60 * 1000;
 
 export async function uploadAudio(ai: GoogleGenAI, blob: Blob, mimeType: string): Promise<UploadedAudio> {
   return geminiCall(async () => {
+    // No httpOptions here: they would replace the SDK's own upload headers. The time limit is set on the client.
     let file = await ai.files.upload({ file: blob, config: { mimeType: geminiMimeType(mimeType), displayName: `mitschrift-${Date.now()}` } });
     const started = Date.now();
     while (file.state === 'PROCESSING') {
@@ -108,7 +114,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function runInBackground(ai: GoogleGenAI, params: CreateParams, run: BackgroundRun = {}): Promise<unknown> {
   let id = run.resumeId;
   if (!id) {
-    const created = (await geminiCall(() => ai.interactions.create({ ...params, background: true } as CreateParams))) as { id?: string; status?: string };
+    const created = (await geminiCall(() =>
+      ai.interactions.create({ ...params, background: true } as CreateParams, { timeout: CREATE_TIMEOUT_MS }),
+    )) as { id?: string; status?: string };
     if (created.status === 'completed') return created;
     if (!created.id) throw new InteractionFailedError('Gemini hat keine Auftragsnummer zurückgegeben.');
     id = created.id;
@@ -166,7 +174,7 @@ export async function runTranscription(ai: GoogleGenAI, params: CreateParams, ru
     await run.onPoll?.('direct');
   }
   try {
-    return await geminiCall(() => ai.interactions.create(params));
+    return await geminiCall(() => ai.interactions.create(params, { timeout: DIRECT_TIMEOUT_MS }));
   } catch (e) {
     if (isAudioUnsupported(e)) {
       throw new UserError(`Das Modell „${model}“ kann keine Audiodateien verarbeiten. In den Einstellungen auf „Key prüfen“ tippen, dort wird ein passendes vorgeschlagen.`);
