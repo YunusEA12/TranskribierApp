@@ -2,12 +2,13 @@
 
 import { db } from '../db/db';
 import { toUserMessage, UserError } from '../lib/errors';
-import { getSettings, missingSettings } from '../settings/settingsStore';
+import { getSettings, githubBackupEnabled, missingSettings } from '../settings/settingsStore';
 import { createEngine } from '../transcription/createEngine';
 import { createGeminiClient, deleteUpload, uploadAudio } from '../transcription/gemini';
-import type { AudioSource } from '../types';
+import type { AudioSource, TranscriptMeta } from '../types';
 import { createTranscript, toMarkdown } from '../vault/markdown';
-import { chooseNewPath, clientFromSettings, writeTranscript } from '../vault/vaultRepo';
+import { transcriptPath } from '../vault/paths';
+import { backupTranscript, clientFromSettings } from '../vault/vaultRepo';
 import {
   currentStep, isRunnable, newJob, retry, savingDone, stepFailed, stepStarted, transcriptionDone, uploadDone,
   type Job, type Step,
@@ -56,14 +57,26 @@ export async function retryJob(id: string): Promise<void> {
   kickRunner();
 }
 
-/** Removes a job and its local audio, and the upload at Gemini if there is one. */
+/** Removes a job with its local audio and transcript, and the upload at Gemini if there is one. */
 export async function discardJob(id: string): Promise<void> {
   const job = await db.jobs.get(id);
-  if (job?.upload && getSettings().geminiKey) await deleteUpload(createGeminiClient(getSettings().geminiKey), job.upload.name);
-  await db.transaction('rw', [db.jobs, db.audio], async () => {
+  if (job?.upload && job.status !== 'done' && getSettings().geminiKey) {
+    await deleteUpload(createGeminiClient(getSettings().geminiKey), job.upload.name);
+  }
+  await db.transaction('rw', [db.jobs, db.audio, db.transcripts], async () => {
     await db.jobs.delete(id);
     await db.audio.delete(id);
+    await db.transcripts.delete(id);
   });
+}
+
+/** A vault path no other transcript on this device uses ("… (2).md" on collisions). */
+async function uniquePath(jobId: string, meta: Pick<TranscriptMeta, 'date' | 'time' | 'title'>): Promise<string> {
+  for (let n = 1; ; n++) {
+    const path = transcriptPath('', meta.date, meta.time, meta.title, n);
+    const taken = await db.transcripts.where('path').equals(path).filter((t) => t.id !== jobId).count();
+    if (!taken) return path;
+  }
 }
 
 let running = false;
@@ -135,7 +148,6 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       return;
     }
     case 'saving': {
-      const client = clientFromSettings(settings);
       const transcript = createTranscript(job.result!, {
         recordedAt: new Date(job.recordedAt),
         durationSec: job.durationSec,
@@ -143,20 +155,32 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
         model: job.model ?? '',
         source: job.source,
       });
-      // Reserve the path first so a retry overwrites our own file instead of creating a duplicate.
-      let path = job.vaultPath;
-      if (!path) {
-        path = await chooseNewPath(client, settings.vaultBaseDir, transcript.meta);
-        await db.jobs.update(job.id, { vaultPath: path });
-      }
+      const { meta } = transcript;
       const markdown = toMarkdown(transcript);
-      const sha = await writeTranscript(client, path, markdown, `Add transcript: ${transcript.meta.title}`);
-      await db.transaction('rw', [db.jobs, db.files, db.history], async () => {
-        await db.files.put({ path: path!, sha, text: markdown });
-        await db.history.put({ path: path!, sha, date: transcript.meta.date, time: transcript.meta.time, title: transcript.meta.title });
-        await db.jobs.update(job.id, savingDone(path!, Date.now()));
+      // The path stays fixed across retries, so handing it to Obsidian again overwrites instead of duplicating.
+      const path = job.vaultPath ?? (await uniquePath(job.id, meta));
+      const existing = await db.transcripts.get(job.id);
+      await db.transaction('rw', [db.jobs, db.transcripts], async () => {
+        await db.transcripts.put({
+          ...existing,
+          id: job.id,
+          path,
+          title: meta.title,
+          date: meta.date,
+          time: meta.time,
+          durationMin: meta.durationMin,
+          speakerCount: Object.keys(meta.speakers).length,
+          markdown,
+          createdAt: existing?.createdAt ?? Date.now(),
+        });
+        await db.jobs.update(job.id, { vaultPath: path });
       });
-      // The transcript is safe in the vault; the copy at Google is no longer needed (CLAUDE.md rule 8).
+      if (githubBackupEnabled(settings)) {
+        const githubPath = await backupTranscript(clientFromSettings(settings), settings.vaultBaseDir, path, markdown, meta.title);
+        await db.transcripts.update(job.id, { githubPath });
+      }
+      await db.jobs.update(job.id, savingDone(path, Date.now()));
+      // The transcript is safe on the device; the copy at Google is no longer needed (CLAUDE.md rule 8).
       if (job.upload) await deleteUpload(ai, job.upload.name);
       return;
     }

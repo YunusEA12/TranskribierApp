@@ -5,12 +5,6 @@ import { HttpError } from '../lib/errors';
 
 const API = 'https://api.github.com';
 
-export interface TreeEntry {
-  path: string;
-  sha: string;
-  type: 'blob' | 'tree' | 'commit';
-}
-
 export interface RepoFile {
   sha: string;
   text: string;
@@ -64,14 +58,6 @@ export class GithubClient {
     const branch = await this.request(`${this.repoPath}/branches/${encodeURIComponent(this.config.branch)}`);
     if (!branch.ok) await this.fail(branch, 'Branch lesen');
     return { canPush: data.permissions?.push ?? false };
-  }
-
-  async listTree(): Promise<TreeEntry[]> {
-    const res = await this.request(`${this.repoPath}/git/trees/${encodeURIComponent(this.config.branch)}?recursive=1`);
-    if (!res.ok) await this.fail(res, 'Dateiliste lesen');
-    const data = (await res.json()) as { tree: TreeEntry[]; truncated?: boolean };
-    if (data.truncated) console.warn('GitHub tree listing was truncated');
-    return data.tree;
   }
 
   /** Returns null if the file does not exist. */

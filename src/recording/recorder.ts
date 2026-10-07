@@ -19,6 +19,9 @@ export class Recorder {
   private runningSince = 0;
   private pendingWrites: Promise<unknown>[] = [];
   private speakerCount?: number;
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private samples: Uint8Array<ArrayBuffer> | null = null;
 
   get state(): RecorderState {
     if (!this.media || this.media.state === 'inactive') return 'idle';
@@ -32,6 +35,15 @@ export class Recorder {
 
   get activeSessionId(): string | undefined {
     return this.state === 'idle' ? undefined : this.sessionId;
+  }
+
+  /** Current input loudness, 0..1, for the level meter. */
+  level(): number {
+    if (!this.analyser || !this.samples || this.state !== 'recording') return 0;
+    this.analyser.getByteTimeDomainData(this.samples);
+    let sum = 0;
+    for (const v of this.samples) sum += ((v - 128) / 128) ** 2;
+    return Math.min(1, Math.sqrt(sum / this.samples.length) * 4);
   }
 
   get mimeType(): string {
@@ -62,6 +74,7 @@ export class Recorder {
       );
     };
     this.media.start(CHUNK_MS);
+    this.startLevelMeter(this.stream);
     await this.acquireWakeLock();
     document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
@@ -108,9 +121,25 @@ export class Recorder {
     await db.chunks.where('sessionId').equals(this.sessionId).delete();
   }
 
+  private startLevelMeter(stream: MediaStream) {
+    try {
+      this.audioContext = new AudioContext();
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 1024;
+      this.samples = new Uint8Array(this.analyser.fftSize);
+      this.audioContext.createMediaStreamSource(stream).connect(this.analyser);
+    } catch {
+      // The meter is cosmetic; recording works without it.
+      this.analyser = null;
+    }
+  }
+
   private cleanup() {
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
+    void this.audioContext?.close().catch(() => {});
+    this.audioContext = null;
+    this.analyser = null;
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     void this.wakeLock?.release().catch(() => {});
     this.wakeLock = null;

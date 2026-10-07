@@ -8,10 +8,12 @@ export type EngineId = 'flash' | 'transcribe';
 export interface Settings {
   userName: string;
   geminiKey: string;
+  obsidianVault: string; // vault name as shown in Obsidian
+  // Optional backup of every transcript into a GitHub repo.
   githubToken: string;
   vaultRepo: string; // "owner/repo"
   vaultBranch: string;
-  vaultBaseDir: string; // "" or a folder for a shared vault
+  vaultBaseDir: string; // "" or a folder inside the repo
   engine: EngineId;
   flashModel: string;
   transcribeModel: string;
@@ -23,6 +25,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   userName: '',
   geminiKey: '',
+  obsidianVault: '',
   githubToken: '',
   vaultRepo: '',
   vaultBranch: 'main',
@@ -67,12 +70,11 @@ export function useSettings(): Settings {
   );
 }
 
-/** What is still missing before a recording can be transcribed and saved. */
+/** What is still missing before a recording can be transcribed. Only the Gemini key is required. */
 export function missingSettings(s: Settings): string[] {
-  const missing: string[] = [];
-  if (!s.userName.trim()) missing.push('Name');
-  if (!s.geminiKey.trim()) missing.push('Gemini-API-Key');
-  if (!s.githubToken.trim()) missing.push('GitHub-Token');
-  if (!/^[\w.-]+\/[\w.-]+$/.test(s.vaultRepo.trim())) missing.push('Vault-Repo (owner/repo)');
-  return missing;
+  return s.geminiKey.trim() ? [] : ['Gemini-API-Key'];
+}
+
+export function githubBackupEnabled(s: Settings): boolean {
+  return Boolean(s.githubToken.trim() && /^[\w.-]+\/[\w.-]+$/.test(s.vaultRepo.trim()));
 }

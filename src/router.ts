@@ -6,13 +6,13 @@ export type Route =
   | { page: 'record' }
   | { page: 'history' }
   | { page: 'settings' }
-  | { page: 'transcript'; path: string };
+  | { page: 'transcript'; id: string };
 
 export function parseHash(hash: string): Route {
   const h = hash.replace(/^#\/?/, '');
   if (h === 'history') return { page: 'history' };
   if (h === 'settings') return { page: 'settings' };
-  if (h.startsWith('t/')) return { page: 'transcript', path: decodeURIComponent(h.slice(2)) };
+  if (h.startsWith('t/')) return { page: 'transcript', id: decodeURIComponent(h.slice(2)) };
   return { page: 'record' };
 }
 
@@ -20,7 +20,7 @@ export const hrefFor = {
   record: '#/',
   history: '#/history',
   settings: '#/settings',
-  transcript: (path: string) => `#/t/${encodeURIComponent(path)}`,
+  transcript: (id: string) => `#/t/${encodeURIComponent(id)}`,
 };
 
 export function navigate(href: string): void {

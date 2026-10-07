@@ -26,23 +26,3 @@ export function transcriptPath(baseDir: string, date: string, time: string, titl
   const name = `${date} ${time.replace(':', '')} ${sanitizeTitle(title)}${suffix > 1 ? ` (${suffix})` : ''}.md`;
   return `${normalizeBaseDir(baseDir)}${TRANSCRIPTS_DIR}/${year}/${name}`;
 }
-
-export interface TranscriptFileInfo {
-  path: string;
-  date: string; // YYYY-MM-DD
-  time: string; // HH:MM
-  title: string;
-}
-
-const FILE_RE = /^(\d{4}-\d{2}-\d{2}) (\d{2})(\d{2}) (.+)\.md$/;
-
-/** Reads date, time and title from a path in the vault; null for files that don't follow the naming scheme. */
-export function parseTranscriptPath(path: string, baseDir = ''): TranscriptFileInfo | null {
-  const prefix = `${normalizeBaseDir(baseDir)}${TRANSCRIPTS_DIR}/`;
-  if (!path.startsWith(prefix)) return null;
-  const fileName = path.slice(path.lastIndexOf('/') + 1);
-  const m = FILE_RE.exec(fileName);
-  if (!m) return null;
-  const [, date, hh, mm, rest] = m as unknown as [string, string, string, string, string];
-  return { path, date, time: `${hh}:${mm}`, title: rest.replace(/ \(\d+\)$/, '') };
-}

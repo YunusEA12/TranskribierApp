@@ -1,52 +1,67 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useCallback, useEffect, useState } from 'react';
-import { db } from '../db/db';
-import type { Job, JobStatus } from '../jobs/queue';
+import { useState } from 'react';
+import { Icon } from '../components/Icon';
+import { db, type TranscriptRecord } from '../db/db';
+import type { Job, Step } from '../jobs/queue';
 import { discardJob, retryJob } from '../jobs/runner';
-import { toUserMessage } from '../lib/errors';
-import { formatClock } from '../lib/time';
+import { formatClock, localDate } from '../lib/time';
 import { hrefFor } from '../router';
 import { missingSettings, useSettings } from '../settings/settingsStore';
-import { clientFromSettings, listTranscripts } from '../vault/vaultRepo';
 
-const STATUS_TEXT: Record<JobStatus, string> = {
-  recorded: 'Wartet',
-  uploading: 'Wird hochgeladen …',
-  transcribing: 'Wird transkribiert …',
-  saving: 'Wird gespeichert …',
-  done: 'Fertig',
-  failed: 'Fehler',
-};
+const STEPS: Array<{ step: Step; label: string }> = [
+  { step: 'uploading', label: 'Hochladen' },
+  { step: 'transcribing', label: 'Transkribieren' },
+  { step: 'saving', label: 'Speichern' },
+];
 
-function JobItem({ job, waitingReason }: { job: Job; waitingReason: string }) {
+function stepClass(job: Job, step: Step): string {
+  const order = STEPS.map((s) => s.step);
+  const current = job.status === 'failed' ? job.failedStep : job.status === 'recorded' ? undefined : job.status;
+  const ci = current ? order.indexOf(current as Step) : -1;
+  const i = order.indexOf(step);
+  if (job.status === 'failed' && step === job.failedStep) return 'fail';
+  if (i < ci) return 'done';
+  if (i === ci && job.status !== 'failed') return 'now';
+  return '';
+}
+
+function JobCard({ job, waitingReason }: { job: Job; waitingReason: string }) {
   const [busy, setBusy] = useState(false);
-  const label = job.fileName ?? `Aufnahme ${new Date(job.recordedAt).toLocaleString('de-DE')}`;
+  const label = job.fileName ?? `Aufnahme ${new Date(job.recordedAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}`;
   return (
-    <li className={`job ${job.status}`}>
-      <div>
-        <strong>{label}</strong> <small>({formatClock(job.durationSec)})</small>
+    <li className={`card job ${job.status}`}>
+      <div className="head">
+        <b>{label}</b>
+        <small>{formatClock(job.durationSec)}</small>
       </div>
-      <div>
-        {STATUS_TEXT[job.status]}
-        {job.status === 'recorded' && waitingReason && ` – ${waitingReason}`}
+      <div className="steps">
+        {STEPS.map((s) => (
+          <div key={s.step} className={stepClass(job, s.step)}>
+            {s.label}
+          </div>
+        ))}
       </div>
+      {job.status === 'recorded' && <small>{waitingReason || 'Startet gleich …'}</small>}
       {job.status === 'failed' && (
         <>
-          <div className="error">{job.error}</div>
+          <p className="error-text">{job.error}</p>
           <div className="actions">
             <button
+              className="btn-small btn-vault"
               disabled={busy}
               onClick={() => {
                 setBusy(true);
                 void retryJob(job.id).finally(() => setBusy(false));
               }}
             >
+              <Icon name="retry" size={18} />
               Erneut versuchen
             </button>
             <button
+              className="btn-small btn-danger"
               disabled={busy}
               onClick={() => {
-                if (confirm('Aufnahme und Fortschritt löschen? Das Audio ist danach weg.')) void discardJob(job.id);
+                if (confirm('Aufnahme löschen? Das Audio ist danach weg.')) void discardJob(job.id);
               }}
             >
               Verwerfen
@@ -58,94 +73,106 @@ function JobItem({ job, waitingReason }: { job: Job; waitingReason: string }) {
   );
 }
 
+function dayLabel(date: string): string {
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  if (date === localDate(today)) return 'Heute';
+  if (date === localDate(yesterday)) return 'Gestern';
+  return new Date(`${date}T12:00`).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function TranscriptCard({ t }: { t: TranscriptRecord }) {
+  return (
+    <li>
+      <a className="card tcard" href={hrefFor.transcript(t.id)}>
+        <span className="title">{t.title}</span>
+        <span className="meta">
+          <span>{t.time}</span>
+          <span>{t.durationMin} min</span>
+          <span>{t.speakerCount} Sprecher</span>
+          {t.obsidianAt ? (
+            <span className="pill vault">
+              <Icon name="check" size={13} /> In Obsidian
+            </span>
+          ) : (
+            <span className="pill warn">Noch nicht in Obsidian</span>
+          )}
+        </span>
+      </a>
+    </li>
+  );
+}
+
 export function HistoryPage() {
   const settings = useSettings();
-  const missing = missingSettings(settings);
   const jobs = useLiveQuery(() => db.jobs.orderBy('recordedAt').reverse().filter((j) => j.status !== 'done').toArray(), []);
-  const entries = useLiveQuery(() => db.history.orderBy('date').reverse().toArray(), []);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const transcripts = useLiveQuery(() => db.transcripts.orderBy('createdAt').reverse().toArray(), []);
   const [query, setQuery] = useState('');
 
-  const refresh = useCallback(async () => {
-    if (missing.length) return;
-    setLoading(true);
-    setError('');
-    try {
-      const list = await listTranscripts(clientFromSettings(settings), settings.vaultBaseDir);
-      await db.transaction('rw', db.history, async () => {
-        await db.history.clear();
-        await db.history.bulkPut(list);
-      });
-    } catch (e) {
-      setError(toUserMessage(e, 'github'));
-    } finally {
-      setLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.githubToken, settings.vaultRepo, settings.vaultBranch, settings.vaultBaseDir]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const waitingReason = missing.length
-    ? `Einstellungen fehlen: ${missing.join(', ')}`
-    : typeof navigator !== 'undefined' && !navigator.onLine
-      ? 'offline, startet automatisch'
+  const waitingReason = missingSettings(settings).length
+    ? 'Wartet auf den API-Key (Einstellungen).'
+    : !navigator.onLine
+      ? 'Offline. Startet automatisch, sobald du wieder online bist.'
       : '';
 
   const q = query.trim().toLowerCase();
-  const sorted = (entries ?? [])
-    .filter((e) => !q || e.title.toLowerCase().includes(q) || e.date.includes(q))
+  const list = (transcripts ?? [])
+    .filter((t) => !q || t.title.toLowerCase().includes(q) || t.markdown.toLowerCase().includes(q))
     .sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  const groups = new Map<string, TranscriptRecord[]>();
+  for (const t of list) groups.set(t.date, [...(groups.get(t.date) ?? []), t]);
+
+  const nothingYet = transcripts?.length === 0 && jobs?.length === 0;
 
   return (
-    <div>
-      <h1>Verlauf</h1>
-      {missing.length > 0 && (
-        <p className="notice">
-          Einstellungen unvollständig ({missing.join(', ')}). <a href={hrefFor.settings}>Zu den Einstellungen</a>
-        </p>
-      )}
+    <div className="page">
+      <div className="page-head">
+        <h1>Verlauf</h1>
+      </div>
 
       {jobs && jobs.length > 0 && (
-        <>
-          <h2>In Arbeit</h2>
-          <ul className="list">
+        <section className="stack" aria-label="In Arbeit">
+          <span className="eyebrow">In Arbeit</span>
+          <ul className="cards">
             {jobs.map((j) => (
-              <JobItem key={j.id} job={j} waitingReason={waitingReason} />
+              <JobCard key={j.id} job={j} waitingReason={waitingReason} />
             ))}
           </ul>
-        </>
+        </section>
       )}
 
-      <h2>Transkripte</h2>
-      <div className="actions">
-        <input type="search" placeholder="Suchen …" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <button onClick={() => void refresh()} disabled={loading || missing.length > 0}>
-          {loading ? 'Lädt …' : 'Aktualisieren'}
-        </button>
-      </div>
-      {error && (
-        <p className="error">
-          {error} <button onClick={() => void refresh()}>Erneut versuchen</button>
-        </p>
+      {nothingYet && (
+        <div className="empty">
+          <span className="icon-wrap">
+            <Icon name="mic" size={30} />
+          </span>
+          <b>Noch keine Transkripte</b>
+          <span>Nimm etwas auf oder importiere eine Audiodatei.</span>
+          <a className="btn btn-rec" href={hrefFor.record}>
+            Zur Aufnahme
+          </a>
+        </div>
       )}
-      {sorted.length === 0 && !loading && !error && <p>Noch keine Transkripte.</p>}
-      <ul className="list">
-        {sorted.map((e) => (
-          <li key={e.path}>
-            <a href={hrefFor.transcript(e.path)}>
-              <small>
-                {new Date(`${e.date}T00:00`).toLocaleDateString('de-DE')} {e.time}
-              </small>
-              <br />
-              {e.title}
-            </a>
-          </li>
-        ))}
-      </ul>
+
+      {transcripts && transcripts.length > 0 && (
+        <label className="search">
+          <Icon name="search" size={18} />
+          <input id="history-search" type="search" placeholder="In Titeln und Texten suchen" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </label>
+      )}
+
+      {[...groups.entries()].map(([date, items]) => (
+        <section key={date} className="stack">
+          <span className="eyebrow day">{dayLabel(date)}</span>
+          <ul className="cards">
+            {items.map((t) => (
+              <TranscriptCard key={t.id} t={t} />
+            ))}
+          </ul>
+        </section>
+      ))}
+
+      {q && list.length === 0 && <p className="muted">Nichts gefunden.</p>}
     </div>
   );
 }

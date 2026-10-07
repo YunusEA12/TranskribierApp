@@ -1,5 +1,5 @@
 // IndexedDB: audio (never leaves the device except for the Gemini upload), jobs, recording chunks
-// for crash recovery, and a cache of the vault history.
+// for crash recovery, and the finished transcripts (the app's history).
 
 import Dexie, { type EntityTable } from 'dexie';
 import type { Job } from '../jobs/queue';
@@ -22,26 +22,26 @@ export interface RecordingChunk {
   elapsedSec: number;
 }
 
-export interface HistoryEntry {
-  path: string;
-  sha: string;
+/** A finished transcript. `markdown` is exactly what goes into the vault. */
+export interface TranscriptRecord {
+  id: string; // same as the job id
+  path: string; // vault-relative, e.g. "Transkripte/2026/2026-10-07 0841 Titel.md"
+  title: string;
   date: string;
   time: string;
-  title: string;
-}
-
-export interface CachedFile {
-  path: string;
-  sha: string;
-  text: string;
+  durationMin: number;
+  speakerCount: number;
+  markdown: string;
+  createdAt: number;
+  obsidianAt?: number; // last hand-off to Obsidian
+  githubPath?: string; // set when the optional GitHub backup succeeded
 }
 
 export class MitschriftDb extends Dexie {
   audio!: EntityTable<AudioRecord, 'id'>;
   jobs!: EntityTable<Job, 'id'>;
   chunks!: EntityTable<RecordingChunk, 'id'>;
-  history!: EntityTable<HistoryEntry, 'path'>;
-  files!: EntityTable<CachedFile, 'path'>;
+  transcripts!: EntityTable<TranscriptRecord, 'id'>;
 
   constructor() {
     super('mitschrift');
@@ -51,6 +51,12 @@ export class MitschriftDb extends Dexie {
       chunks: '++id, sessionId, [sessionId+seq]',
       history: 'path, date',
       files: 'path',
+    });
+    // v2: transcripts are kept on the device and handed to Obsidian; the GitHub history cache is gone.
+    this.version(2).stores({
+      transcripts: 'id, path, createdAt',
+      history: null,
+      files: null,
     });
   }
 }

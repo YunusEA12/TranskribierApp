@@ -1,32 +1,49 @@
 import { useState, type ReactNode } from 'react';
+import { Icon } from '../components/Icon';
 import { kickRunner } from '../jobs/runner';
 import { testConnections, type CheckResult } from '../settings/connectionTest';
 import { DEFAULT_SETTINGS, saveSettings, useSettings, type Settings } from '../settings/settingsStore';
 
-const ext = (href: string, text: string) => (
-  <a href={href} target="_blank" rel="noopener noreferrer">
-    {text}
-  </a>
-);
+const PEOPLE = ['Yunus', 'Calvin'];
+const CHECKED_KEYS = new Set<keyof Settings>(['geminiKey', 'engine', 'flashModel', 'transcribeModel', 'fallbackModel', 'githubToken', 'vaultRepo', 'vaultBranch']);
+
+function Checks({ checks, onFix }: { checks: CheckResult[]; onFix: (c: CheckResult) => void }) {
+  return (
+    <ul className="checks">
+      {checks.map((c) => (
+        <li key={c.label} className={c.ok ? 'ok' : 'bad'}>
+          <span className="mark">
+            <Icon name={c.ok ? 'check' : 'alert'} size={14} />
+          </span>
+          <span>
+            <b>{c.label}:</b> {c.message}{' '}
+            {c.fix && (
+              <button className="btn-small btn-ghost" onClick={() => onFix(c)}>
+                Übernehmen
+              </button>
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export function SettingsPage() {
-  const stored = useSettings();
-  const [draft, setDraft] = useState<Settings>(stored);
-  const [saved, setSaved] = useState(false);
+  const settings = useSettings();
   const [checks, setChecks] = useState<CheckResult[] | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
+  const [otherName, setOtherName] = useState(!PEOPLE.includes(settings.userName) && settings.userName !== '');
 
+  // Every change is saved right away; nothing to forget. Only changes the check covers invalidate its result.
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => {
-    setDraft((d) => ({ ...d, [key]: value }));
-    setSaved(false);
+    saveSettings({ [key]: value } as Partial<Settings>);
+    if (CHECKED_KEYS.has(key)) setChecks(null);
   };
-  const text = (
-    key: keyof Settings,
-    label: ReactNode,
-    opts: { secret?: boolean; placeholder?: string; hint?: ReactNode; models?: boolean } = {},
-  ) => (
-    <label>
+
+  const text = (key: keyof Settings, label: ReactNode, opts: { secret?: boolean; placeholder?: string; hint?: ReactNode; models?: boolean } = {}) => (
+    <label className="field">
       {label}
       <input
         id={`setting-${key}`}
@@ -34,7 +51,7 @@ export function SettingsPage() {
         autoComplete="off"
         autoCapitalize="off"
         spellCheck={false}
-        value={draft[key] as string}
+        value={settings[key] as string}
         placeholder={opts.placeholder}
         list={opts.models ? 'gemini-models' : undefined}
         onChange={(e) => set(key, e.target.value as never)}
@@ -43,96 +60,110 @@ export function SettingsPage() {
     </label>
   );
 
-  const save = () => {
-    saveSettings(draft);
-    setSaved(true);
-    kickRunner();
-  };
-
   const test = async () => {
-    save();
     setTesting(true);
     setChecks(null);
     try {
-      const report = await testConnections(draft);
+      const report = await testConnections(settings);
       setChecks(report.checks);
       setModels(report.models);
+      if (report.checks.every((c) => c.ok)) kickRunner();
     } finally {
       setTesting(false);
     }
   };
 
+  const hasKey = settings.geminiKey.trim() !== '';
+  const allOk = checks?.every((c) => c.ok);
+
   return (
-    <div>
-      <h1>Einstellungen</h1>
-      <p className="notice">
-        Du musst nur die <b>4 Felder</b> unten ausfüllen und auf <b>Speichern und testen</b> tippen. „Weitere Einstellungen“
-        kannst du so lassen.
-      </p>
-
-      <fieldset>
-        <legend>Ausfüllen</legend>
-        {text('userName', <b>1. Dein Name</b>, { placeholder: 'z. B. Yunus' })}
-        {text('geminiKey', <b>2. Gemini-API-Key</b>, {
-          secret: true,
-          hint: (
-            <>
-              Key holen: {ext('https://aistudio.google.com/apikey', 'aistudio.google.com/apikey')} → „Create API key“ →
-              kopieren und hier einfügen.
-            </>
-          ),
-        })}
-        {text('vaultRepo', <b>3. Vault-Repo</b>, {
-          placeholder: 'z. B. yunusea12/mitschrift-vault',
-          hint: (
-            <>
-              Dein GitHub-Name, Schrägstrich, Name des Repos. Noch kein Repo? {ext('https://github.com/new', 'Hier anlegen')}: Name
-              „mitschrift-vault“, <b>Private</b>, „Add a README file“ anhaken.
-            </>
-          ),
-        })}
-        {text('githubToken', <b>4. GitHub-Token</b>, {
-          secret: true,
-          hint: (
-            <>
-              {ext('https://github.com/settings/personal-access-tokens/new', 'Token erstellen')}: Repository access → „Only select
-              repositories“ → mitschrift-vault. Permissions → „Contents“ → „Read and write“. Dann „Generate token“, kopieren und
-              hier einfügen.
-            </>
-          ),
-        })}
-      </fieldset>
-
-      <div className="actions">
-        <button className="primary" onClick={() => void test()} disabled={testing}>
-          {testing ? 'Teste …' : 'Speichern und testen'}
-        </button>
+    <div className="page">
+      <div className="page-head">
+        <h1>Einstellungen</h1>
       </div>
-      {saved && !checks && !testing && <p className="ok">Gespeichert.</p>}
-      {checks && (
-        <ul className="checks">
-          {checks.map((c) => (
-            <li key={c.label} className={c.ok ? 'ok' : 'error'}>
-              {c.ok ? '✓' : '✗'} {c.label}: {c.message}
-              {c.fix && (
-                <button className="inline" onClick={() => set(c.fix!.key, c.fix!.value)}>
-                  Übernehmen
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {checks?.every((c) => c.ok) && <p className="ok">Alles bereit. Du kannst unter „Aufnahme“ loslegen.</p>}
 
-      <details>
-        <summary>Weitere Einstellungen (kannst du so lassen)</summary>
-        <fieldset>
-          <legend>Transkription</legend>
-          <label>
+      <section className="card key-card" aria-labelledby="key-title">
+        <div className="title-row">
+          <Icon name="key" />
+          <h2 id="key-title">Gemini-API-Key</h2>
+          {allOk ? <span className="pill ok">geprüft</span> : hasKey ? <span className="pill">eingetragen</span> : <span className="pill warn">fehlt</span>}
+        </div>
+        <p className="muted">Das ist das Einzige, was die App braucht. Der Key bleibt auf diesem Gerät.</p>
+        <ol className="step-list">
+          <li>
+            Key bei Google holen:{' '}
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">
+              aistudio.google.com/apikey
+            </a>
+          </li>
+          <li>„Create API key“ antippen und den Key kopieren</li>
+          <li>Hier einfügen und prüfen</li>
+        </ol>
+        <input
+          id="setting-geminiKey"
+          type="password"
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          placeholder="Key hier einfügen"
+          value={settings.geminiKey}
+          onChange={(e) => set('geminiKey', e.target.value.trim())}
+          onBlur={kickRunner}
+        />
+        <button className="btn-vault btn-block" onClick={() => void test()} disabled={testing || !hasKey}>
+          {testing ? 'Prüfe …' : 'Key prüfen'}
+        </button>
+        {checks && <Checks checks={checks} onFix={(c) => c.fix && set(c.fix.key, c.fix.value)} />}
+        {allOk && <p className="ok-text">Alles bereit. Unter „Aufnahme“ kannst du loslegen.</p>}
+      </section>
+
+      <section className="card stack" aria-labelledby="who-title">
+        <div className="row">
+          <Icon name="person" />
+          <h2 id="who-title">Wer nimmt auf?</h2>
+        </div>
+        <div className="chips" role="group" aria-label="Name">
+          {PEOPLE.map((p) => (
+            <button
+              key={p}
+              className="chip"
+              aria-pressed={!otherName && settings.userName === p}
+              onClick={() => {
+                setOtherName(false);
+                set('userName', p);
+              }}
+            >
+              {p}
+            </button>
+          ))}
+          <button className="chip" aria-pressed={otherName} onClick={() => setOtherName(true)}>
+            Andere
+          </button>
+        </div>
+        {otherName && text('userName', 'Name', { placeholder: 'Dein Name' })}
+        <small>Steht in jeder Notiz, damit ihr seht, wer aufgenommen hat.</small>
+      </section>
+
+      <section className="card stack" aria-labelledby="vault-title">
+        <div className="row">
+          <Icon name="vault" />
+          <h2 id="vault-title">Obsidian</h2>
+        </div>
+        {text('obsidianVault', 'Name des Vaults', {
+          placeholder: 'z. B. Notizen',
+          hint: 'Genau so, wie der Vault in Obsidian heißt. Kannst du auch beim ersten Speichern eintragen.',
+        })}
+        <small>Notizen landen im Ordner „Transkripte/Jahr“. Obsidian muss auf diesem Gerät installiert sein.</small>
+      </section>
+
+      <details className="card">
+        <summary>Weitere Einstellungen</summary>
+        <div className="stack">
+          <span className="eyebrow">Transkription</span>
+          <label className="field">
             Engine
-            <select id="setting-engine" value={draft.engine} onChange={(e) => set('engine', e.target.value as Settings['engine'])}>
-              <option value="flash">A: Flash-Modell (Sprecher, Titel in einem Schritt)</option>
+            <select id="setting-engine" value={settings.engine} onChange={(e) => set('engine', e.target.value as Settings['engine'])}>
+              <option value="flash">A: Flash-Modell (Sprecher und Titel in einem Schritt)</option>
               <option value="transcribe">B: Transcribe-Modell (max. 30 min mit Sprechern)</option>
             </select>
           </label>
@@ -140,39 +171,30 @@ export function SettingsPage() {
           {text('transcribeModel', 'Modell-ID Transcribe', { placeholder: DEFAULT_SETTINGS.transcribeModel, models: true })}
           {text('fallbackModel', 'Ersatzmodell (optional)', {
             models: true,
-            hint: 'Springt ein, wenn das Tageslimit des Hauptmodells erreicht ist, z. B. ein „flash-lite“-Modell. Leer = kein Ersatz.',
+            hint: 'Springt ein, wenn das Tageslimit des Hauptmodells erreicht ist, z. B. ein „flash-lite“-Modell. Nach „Key prüfen“ werden passende Modelle vorgeschlagen.',
           })}
           <datalist id="gemini-models">
             {models.map((m) => (
               <option key={m} value={m} />
             ))}
           </datalist>
-          {models.length === 0 && <small>Nach „Speichern und testen“ werden die verfügbaren Modelle beim Tippen vorgeschlagen.</small>}
-          <label className="check">
-            <input
-              id="setting-removeFillers"
-              type="checkbox"
-              checked={draft.removeFillers}
-              onChange={(e) => set('removeFillers', e.target.checked)}
-            />
+          <label className="toggle">
+            <input id="setting-removeFillers" type="checkbox" checked={settings.removeFillers} onChange={(e) => set('removeFillers', e.target.checked)} />
             Füllwörter („äh“, „ähm“) entfernen
           </label>
-        </fieldset>
-        <fieldset>
-          <legend>Vault</legend>
+
+          <span className="eyebrow sub-head">Sicherung auf GitHub (optional)</span>
+          <small>Nur nötig, wenn Transkripte zusätzlich in einem GitHub-Repo landen sollen. Sonst leer lassen.</small>
+          {text('vaultRepo', 'Repo', { placeholder: 'github-name/repo-name' })}
+          {text('githubToken', 'Token', { secret: true, hint: 'Fine-grained Token nur für dieses Repo, Contents: Read and write' })}
           {text('vaultBranch', 'Branch', { placeholder: 'main' })}
-          {text('vaultBaseDir', 'Unterordner (optional)', { hint: 'Nur bei einem gemeinsamen Vault, z. B. „calvin“' })}
-        </fieldset>
-        <div className="actions">
-          <button onClick={save}>Speichern</button>
+          {text('vaultBaseDir', 'Unterordner im Repo', { placeholder: 'leer = oberste Ebene' })}
         </div>
       </details>
 
-      <p>
-        <small>
-          Alles wird nur auf diesem Gerät gespeichert. Auf dem iPhone haben die App vom Home-Bildschirm und der Safari-Tab
-          getrennten Speicher: hier in der App vom Home-Bildschirm eintragen.
-        </small>
+      <p className="muted" style={{ fontSize: '0.85rem' }}>
+        Alles wird nur auf diesem Gerät gespeichert. Auf dem iPhone haben die App vom Home-Bildschirm und Safari getrennten Speicher: hier in
+        der App vom Home-Bildschirm eintragen.
       </p>
     </div>
   );

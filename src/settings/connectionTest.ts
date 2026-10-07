@@ -1,7 +1,7 @@
 import { HttpError, toUserMessage } from '../lib/errors';
 import { checkModel, createGeminiClient, listModels } from '../transcription/gemini';
 import { clientFromSettings } from '../vault/vaultRepo';
-import { missingSettings, type Settings } from './settingsStore';
+import { githubBackupEnabled, type Settings } from './settingsStore';
 
 export interface CheckResult {
   label: string;
@@ -16,8 +16,6 @@ export interface ConnectionReport {
   models: string[]; // models the Gemini key can use, as suggestions for the settings
 }
 
-const VAULT_REPO_RE = /^[\w.-]+\/[\w.-]+$/;
-
 /** Best guess for a current general-purpose flash model among the ids a key can use. */
 export function suggestFlashModel(models: string[], lite = false): string | undefined {
   const candidates = models.filter(
@@ -30,37 +28,33 @@ export function suggestFlashModel(models: string[], lite = false): string | unde
 
 export async function testConnections(s: Settings): Promise<ConnectionReport> {
   const results: CheckResult[] = [];
-  const missing = missingSettings(s);
-  if (missing.includes('Name')) results.push({ label: 'Name', ok: false, message: 'Bitte Feld 1 ausfüllen.' });
 
-  // GitHub
-  const repoOk = VAULT_REPO_RE.test(s.vaultRepo.trim());
-  if (!repoOk) results.push({ label: 'Vault-Repo', ok: false, message: 'Feld 3 fehlt oder hat nicht die Form „github-name/repo-name“.' });
-  if (!s.githubToken.trim()) results.push({ label: 'GitHub-Token', ok: false, message: 'Feld 4 ist leer.' });
-  if (repoOk && s.githubToken.trim()) {
-    try {
-      const { canPush } = await clientFromSettings(s).checkAccess();
-      results.push(
-        canPush
-          ? { label: 'GitHub', ok: true, message: `Zugriff auf ${s.vaultRepo.trim()} ok.` }
-          : { label: 'GitHub', ok: false, message: 'Repo gefunden, aber der Token darf nicht schreiben (Contents: „Read and write“ fehlt).' },
-      );
-    } catch (e) {
-      results.push({
-        label: 'GitHub',
-        ok: false,
-        message:
-          e instanceof HttpError && e.status === 404
-            ? `Repo „${s.vaultRepo.trim()}“ nicht gefunden. Gibt es das Repo schon, und hat der Token Zugriff darauf (Only select repositories → ${s.vaultRepo.split('/')[1]})?`
-            : toUserMessage(e, 'github'),
-      });
+  // Optional GitHub backup: only checked when something is filled in.
+  if (s.githubToken.trim() || s.vaultRepo.trim()) {
+    if (!githubBackupEnabled(s)) {
+      results.push({ label: 'GitHub-Sicherung', ok: false, message: 'Token und Repo („github-name/repo-name“) müssen beide ausgefüllt sein.' });
+    } else {
+      try {
+        const { canPush } = await clientFromSettings(s).checkAccess();
+        results.push(
+          canPush
+            ? { label: 'GitHub-Sicherung', ok: true, message: `Zugriff auf ${s.vaultRepo.trim()} ok.` }
+            : { label: 'GitHub-Sicherung', ok: false, message: 'Repo gefunden, aber der Token darf nicht schreiben (Contents: „Read and write“).' },
+        );
+      } catch (e) {
+        results.push({
+          label: 'GitHub-Sicherung',
+          ok: false,
+          message: e instanceof HttpError && e.status === 404 ? `Repo „${s.vaultRepo.trim()}“ nicht gefunden oder kein Zugriff.` : toUserMessage(e, 'github'),
+        });
+      }
     }
   }
 
   // Gemini
   let models: string[] = [];
   if (!s.geminiKey.trim()) {
-    results.push({ label: 'Gemini-API-Key', ok: false, message: 'Feld 2 ist leer.' });
+    results.push({ label: 'Gemini-API-Key', ok: false, message: 'Bitte den Key einfügen.' });
     return { checks: results, models };
   }
   const ai = createGeminiClient(s.geminiKey);

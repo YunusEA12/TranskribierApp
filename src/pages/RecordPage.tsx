@@ -1,19 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from '../components/Icon';
 import { db } from '../db/db';
 import { toUserMessage } from '../lib/errors';
 import { formatClock } from '../lib/time';
 import { importAudioFile } from '../recording/importAudio';
 import { interruptedSessions, Recorder, recoverSession, type RecorderState } from '../recording/recorder';
 import { hrefFor, navigate } from '../router';
+import { missingSettings, useSettings } from '../settings/settingsStore';
 
 const recorder = new Recorder(); // module-level: survives page switches during a recording
+const BARS = 40;
+const SPEAKER_OPTIONS = [undefined, 1, 2, 3, 4, 5] as const;
 
 type Interrupted = Awaited<ReturnType<typeof interruptedSessions>>;
 
+const STATE_TEXT: Record<RecorderState, string> = { idle: 'Bereit', recording: 'Nimmt auf', paused: 'Pausiert' };
+
 export function RecordPage() {
+  const settings = useSettings();
   const [state, setState] = useState<RecorderState>(recorder.state);
   const [elapsed, setElapsed] = useState(recorder.elapsedSec);
-  const [speakerCount, setSpeakerCount] = useState('');
+  const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0));
+  const [speakerCount, setSpeakerCount] = useState<number | undefined>(undefined);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [interrupted, setInterrupted] = useState<Interrupted>([]);
@@ -23,7 +31,8 @@ export function RecordPage() {
     const t = setInterval(() => {
       setElapsed(recorder.elapsedSec);
       setState(recorder.state);
-    }, 250);
+      if (recorder.state === 'recording') setLevels((l) => [...l.slice(1), recorder.level()]);
+    }, 90);
     return () => clearInterval(t);
   }, []);
 
@@ -39,25 +48,24 @@ export function RecordPage() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [state]);
 
-  const count = () => {
-    const n = parseInt(speakerCount, 10);
-    return n >= 1 && n <= 10 ? n : undefined;
-  };
-
   const run = async (fn: () => Promise<unknown>) => {
     setError('');
     setBusy(true);
     try {
       await fn();
     } catch (e) {
-      setError(e instanceof DOMException && e.name === 'NotAllowedError' ? 'Mikrofon-Zugriff wurde verweigert.' : toUserMessage(e));
+      setError(e instanceof DOMException && e.name === 'NotAllowedError' ? 'Mikrofon-Zugriff wurde verweigert. In den Browser-Einstellungen erlauben.' : toUserMessage(e));
     } finally {
       setBusy(false);
       setState(recorder.state);
     }
   };
 
-  const start = () => run(() => recorder.start(count()));
+  const start = () =>
+    run(async () => {
+      setLevels(Array(BARS).fill(0));
+      await recorder.start(speakerCount);
+    });
   const stop = () =>
     run(async () => {
       await recorder.stop();
@@ -69,7 +77,7 @@ export function RecordPage() {
   const importFile = (file: File | undefined) => {
     if (!file) return;
     void run(async () => {
-      await importAudioFile(file, count());
+      await importAudioFile(file, speakerCount);
       navigate(hrefFor.history);
     });
   };
@@ -86,46 +94,113 @@ export function RecordPage() {
     });
   };
 
+  const active = state !== 'idle';
+
   return (
-    <div>
-      <h1>Aufnahme</h1>
+    <div className="page">
+      <div className="page-head">
+        <h1>Aufnahme</h1>
+      </div>
+
+      {missingSettings(settings).length > 0 && (
+        <a className="banner" href={hrefFor.settings}>
+          <Icon name="key" />
+          <span>Noch kein API-Key eingetragen. Aufnehmen geht trotzdem, transkribiert wird danach.</span>
+          <span className="go">Eintragen</span>
+        </a>
+      )}
 
       {interrupted.map((s) => (
-        <div key={s.sessionId} className="notice">
-          Unterbrochene Aufnahme vom {new Date(s.startedAt).toLocaleString('de-DE')} ({formatClock(s.elapsedSec)}) gefunden.
+        <div key={s.sessionId} className="card stack">
+          <div className="row">
+            <Icon name="alert" />
+            <b>Unterbrochene Aufnahme gefunden</b>
+          </div>
+          <small>
+            {new Date(s.startedAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })} · {formatClock(s.elapsedSec)}
+          </small>
           <div className="actions">
-            <button onClick={() => void recover(s.sessionId)} disabled={busy}>
+            <button className="btn-vault" onClick={() => void recover(s.sessionId)} disabled={busy}>
               Wiederherstellen
             </button>
-            <button onClick={() => dropInterrupted(s.sessionId)} disabled={busy}>
+            <button className="btn-danger" onClick={() => dropInterrupted(s.sessionId)} disabled={busy}>
               Löschen
             </button>
           </div>
         </div>
       ))}
 
-      <label>
-        Erwartete Sprecher (optional)
-        <input
-          type="number"
-          inputMode="numeric"
-          min={1}
-          max={10}
-          value={speakerCount}
-          disabled={state !== 'idle'}
-          onChange={(e) => setSpeakerCount(e.target.value)}
-        />
-      </label>
+      <section className={`card recorder ${state}`} aria-label="Rekorder">
+        <div className="meter" aria-hidden="true">
+          {levels.map((l, i) => (
+            <span key={i} style={{ height: `${Math.max(6, l * 100)}%` }} />
+          ))}
+        </div>
+        <div className="clock" role="timer" aria-live="off">
+          {formatClock(elapsed)}
+        </div>
+        <div className="rec-state">{STATE_TEXT[state]}</div>
 
-      <div className={`timer ${state}`}>{formatClock(elapsed)}</div>
+        <div className="controls">
+          {active && (
+            <div>
+              {state === 'recording' ? (
+                <button className="round-btn" onClick={() => recorder.pause()} aria-label="Pause">
+                  <Icon name="pause" />
+                </button>
+              ) : (
+                <button className="round-btn" onClick={() => recorder.resume()} aria-label="Weiter">
+                  <Icon name="play" />
+                </button>
+              )}
+              <span className="caption">{state === 'recording' ? 'Pause' : 'Weiter'}</span>
+            </div>
+          )}
+          <div>
+            <button
+              className={`rec-btn ${active ? 'stop' : ''}`}
+              onClick={() => void (active ? stop() : start())}
+              disabled={busy}
+              aria-label={active ? 'Stoppen und transkribieren' : 'Aufnahme starten'}
+            />
+            <span className="caption">{active ? 'Fertig' : 'Aufnehmen'}</span>
+          </div>
+          {active && (
+            <div>
+              <button className="round-btn danger" onClick={discard} disabled={busy} aria-label="Verwerfen">
+                <Icon name="trash" />
+              </button>
+              <span className="caption">Verwerfen</span>
+            </div>
+          )}
+        </div>
+      </section>
 
-      {state === 'idle' ? (
-        <div className="actions big">
-          <button className="primary" onClick={() => void start()} disabled={busy}>
-            ● Aufnahme starten
-          </button>
-          <button onClick={() => fileInput.current?.click()} disabled={busy}>
-            Audiodatei importieren
+      {active ? (
+        <p className="muted" style={{ textAlign: 'center', fontSize: '0.88rem' }}>
+          Der Bildschirm bleibt an. App nicht schließen oder wechseln, sonst stoppt das iPhone die Aufnahme.
+        </p>
+      ) : (
+        <>
+          <div className="stack">
+            <span className="eyebrow">Wie viele sprechen?</span>
+            <div className="chips" role="group" aria-label="Erwartete Sprecher">
+              {SPEAKER_OPTIONS.map((n) => (
+                <button key={n ?? 'auto'} className="chip" aria-pressed={speakerCount === n} onClick={() => setSpeakerCount(n)}>
+                  {n === undefined ? 'Auto' : n === 5 ? '5+' : n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button className="import-card" onClick={() => fileInput.current?.click()} disabled={busy}>
+            <span className="icon-wrap">
+              <Icon name="upload" />
+            </span>
+            <span>
+              <b>Audiodatei importieren</b>
+              <small>Zum Beispiel aus der Sprachmemo-App. Für lange Meetings der sichere Weg.</small>
+            </span>
           </button>
           <input
             ref={fileInput}
@@ -137,34 +212,10 @@ export function RecordPage() {
               e.target.value = '';
             }}
           />
-        </div>
-      ) : (
-        <div className="actions big">
-          {state === 'recording' ? (
-            <button onClick={() => recorder.pause()}>❚❚ Pause</button>
-          ) : (
-            <button onClick={() => recorder.resume()}>▶ Weiter</button>
-          )}
-          <button className="primary" onClick={() => void stop()} disabled={busy}>
-            ■ Stopp und transkribieren
-          </button>
-          <button onClick={discard} disabled={busy}>
-            Verwerfen
-          </button>
-        </div>
+        </>
       )}
 
-      {state !== 'idle' && (
-        <p>
-          <small>Bildschirm bleibt an. App nicht schließen oder wechseln; auf dem iPhone stoppt sonst die Aufnahme.</small>
-        </p>
-      )}
-      {state === 'idle' && (
-        <p>
-          <small>Für lange Meetings ist die Sprachmemo-App des Handys robuster: dort aufnehmen und die Datei hier importieren.</small>
-        </p>
-      )}
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error-text">{error}</p>}
     </div>
   );
 }

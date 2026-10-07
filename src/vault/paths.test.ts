@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeBaseDir, parseTranscriptPath, sanitizeTitle, transcriptPath } from './paths';
+import { normalizeBaseDir, sanitizeTitle, transcriptPath } from './paths';
 
 describe('sanitizeTitle', () => {
   it('removes forbidden characters and collapses whitespace', () => {
@@ -36,31 +36,5 @@ describe('normalizeBaseDir', () => {
     expect(normalizeBaseDir('')).toBe('');
     expect(normalizeBaseDir(' / ')).toBe('');
     expect(normalizeBaseDir('a/b/')).toBe('a/b/');
-  });
-});
-
-describe('parseTranscriptPath', () => {
-  it('reads date, time and title', () => {
-    expect(parseTranscriptPath('Transkripte/2026/2026-10-07 0841 Über Öl.md')).toEqual({
-      path: 'Transkripte/2026/2026-10-07 0841 Über Öl.md',
-      date: '2026-10-07',
-      time: '08:41',
-      title: 'Über Öl',
-    });
-  });
-  it('drops the collision suffix from the title', () => {
-    expect(parseTranscriptPath('Transkripte/2026/2026-10-07 0841 Test (3).md')?.title).toBe('Test');
-  });
-  it('respects the base folder', () => {
-    expect(parseTranscriptPath('yunus/Transkripte/2026/2026-10-07 0841 A.md', 'yunus')?.title).toBe('A');
-    expect(parseTranscriptPath('calvin/Transkripte/2026/2026-10-07 0841 A.md', 'yunus')).toBeNull();
-  });
-  it('ignores other files', () => {
-    expect(parseTranscriptPath('README.md')).toBeNull();
-    expect(parseTranscriptPath('Transkripte/notiz.md')).toBeNull();
-  });
-  it('round-trips with transcriptPath', () => {
-    const p = transcriptPath('', '2026-10-07', '08:41', 'Ärger: über [Öl]');
-    expect(parseTranscriptPath(p)).toMatchObject({ date: '2026-10-07', time: '08:41', title: 'Ärger über Öl' });
   });
 });
