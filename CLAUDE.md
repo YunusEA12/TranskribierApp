@@ -9,14 +9,14 @@ Plan, Begründungen und Phasen stehen in `PLAN.md`. Vor einer Aufgabe den passen
 
 ## Status
 
-Phase 1 im Test auf echten Handys: Aufnahme, Transkription im Hintergrund, gemeinsamer Speicher (GitHub-Repo) mit QR-Einladung, gemeinsame Historie. Diese Zeile beim Phasenwechsel aktualisieren.
+Phase 1 im Test auf echten Handys: Aufnahme mit Taschen-Modus, Transkription per Streaming (App bleibt offen), gemeinsamer Speicher (GitHub-Repo) mit QR-Einladung, gemeinsame Historie, Fehlersuche in den Einstellungen. Diese Zeile beim Phasenwechsel aktualisieren.
 
 ## Stack
 
 - Vite, React, TypeScript (strict)
 - `vite-plugin-pwa` für Manifest und Service Worker
 - Dexie (IndexedDB) für Audio, Jobs und den Historien-Cache
-- `@google/genai` für Gemini (Interactions API + Files API)
+- `@google/genai` für Gemini: Files API für den Upload, `generateContentStream` für das Transkript (Engine B: Interactions API)
 - GitHub REST API per `fetch` für den gemeinsamen Speicher, kein Octokit
 - `qrcode` und `jsqr` für die Einladung per QR-Code
 - Vitest für Logik-Tests
