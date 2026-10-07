@@ -8,13 +8,14 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<Settings>(stored);
   const [saved, setSaved] = useState(false);
   const [checks, setChecks] = useState<CheckResult[] | null>(null);
+  const [models, setModels] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setDraft((d) => ({ ...d, [key]: value }));
     setSaved(false);
   };
-  const text = (key: keyof Settings, label: string, opts: { secret?: boolean; placeholder?: string; hint?: string } = {}) => (
+  const text = (key: keyof Settings, label: string, opts: { secret?: boolean; placeholder?: string; hint?: string; models?: boolean } = {}) => (
     <label>
       {label}
       <input
@@ -24,6 +25,7 @@ export function SettingsPage() {
         spellCheck={false}
         value={draft[key] as string}
         placeholder={opts.placeholder}
+        list={opts.models ? 'gemini-models' : undefined}
         onChange={(e) => set(key, e.target.value as never)}
       />
       {opts.hint && <small>{opts.hint}</small>}
@@ -41,7 +43,9 @@ export function SettingsPage() {
     setTesting(true);
     setChecks(null);
     try {
-      setChecks(await testConnections(draft));
+      const report = await testConnections(draft);
+      setChecks(report.checks);
+      setModels(report.models);
     } finally {
       setTesting(false);
     }
@@ -72,8 +76,18 @@ export function SettingsPage() {
             <option value="transcribe">B: Transcribe-Modell (max. 30 min mit Sprechern)</option>
           </select>
         </label>
-        {text('flashModel', 'Modell-ID Flash', { placeholder: DEFAULT_SETTINGS.flashModel })}
-        {text('transcribeModel', 'Modell-ID Transcribe', { placeholder: DEFAULT_SETTINGS.transcribeModel })}
+        {text('flashModel', 'Modell-ID Flash', { placeholder: DEFAULT_SETTINGS.flashModel, models: true })}
+        {text('transcribeModel', 'Modell-ID Transcribe', { placeholder: DEFAULT_SETTINGS.transcribeModel, models: true })}
+        {text('fallbackModel', 'Ersatzmodell (optional)', {
+          models: true,
+          hint: 'Springt ein, wenn das Kontingent des Hauptmodells für heute aufgebraucht ist, z. B. ein „flash-lite“-Modell. Leer lassen = kein Ersatz.',
+        })}
+        <datalist id="gemini-models">
+          {models.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+        {models.length === 0 && <small>Nach „Verbindung testen“ werden die verfügbaren Modelle beim Tippen vorgeschlagen.</small>}
         <label className="check">
           <input type="checkbox" checked={draft.removeFillers} onChange={(e) => set('removeFillers', e.target.checked)} />
           Füllwörter („äh“, „ähm“) entfernen

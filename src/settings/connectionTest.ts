@@ -1,5 +1,5 @@
 import { toUserMessage } from '../lib/errors';
-import { checkModel, createGeminiClient } from '../transcription/gemini';
+import { checkModel, createGeminiClient, listModels } from '../transcription/gemini';
 import { clientFromSettings } from '../vault/vaultRepo';
 import type { Settings } from './settingsStore';
 
@@ -9,7 +9,12 @@ export interface CheckResult {
   message: string;
 }
 
-export async function testConnections(s: Settings): Promise<CheckResult[]> {
+export interface ConnectionReport {
+  checks: CheckResult[];
+  models: string[]; // models the Gemini key can use, as suggestions for the settings
+}
+
+export async function testConnections(s: Settings): Promise<ConnectionReport> {
   const results: CheckResult[] = [];
 
   try {
@@ -24,14 +29,21 @@ export async function testConnections(s: Settings): Promise<CheckResult[]> {
   }
 
   const ai = createGeminiClient(s.geminiKey);
-  const models = s.engine === 'transcribe' ? [s.transcribeModel, s.flashModel] : [s.flashModel];
-  for (const model of models) {
+  const configured = s.engine === 'transcribe' ? [s.transcribeModel, s.flashModel] : [s.flashModel];
+  if (s.fallbackModel.trim()) configured.push(s.fallbackModel);
+  for (const model of configured) {
     try {
       await checkModel(ai, model.trim());
-      results.push({ label: `Gemini (${model})`, ok: true, message: 'Key und Modell ok.' });
+      results.push({ label: `Gemini (${model.trim()})`, ok: true, message: 'Key und Modell ok.' });
     } catch (e) {
-      results.push({ label: `Gemini (${model})`, ok: false, message: toUserMessage(e, 'gemini') });
+      results.push({ label: `Gemini (${model.trim()})`, ok: false, message: toUserMessage(e, 'gemini') });
     }
   }
-  return results;
+  let models: string[] = [];
+  try {
+    models = await listModels(ai);
+  } catch {
+    // The per-model checks above already report key problems.
+  }
+  return { checks: results, models };
 }

@@ -15,6 +15,7 @@ export interface Settings {
   engine: EngineId;
   flashModel: string;
   transcribeModel: string;
+  fallbackModel: string; // used when the main model's quota is exhausted; "" = none
   removeFillers: boolean;
 }
 
@@ -29,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   engine: 'flash',
   flashModel: 'gemini-3.8-flash',
   transcribeModel: 'gemini-3.5-transcribe',
+  fallbackModel: '',
   removeFillers: true,
 };
 

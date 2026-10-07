@@ -59,6 +59,18 @@ export async function checkModel(ai: GoogleGenAI, model: string): Promise<void> 
   await geminiCall(() => ai.models.get({ model }));
 }
 
+/** Model ids this key can use for content generation, e.g. "gemini-3.8-flash". */
+export async function listModels(ai: GoogleGenAI): Promise<string[]> {
+  return geminiCall(async () => {
+    const ids: string[] = [];
+    for await (const m of await ai.models.list()) {
+      const id = m.name?.replace(/^models\//, '');
+      if (id?.startsWith('gemini') && (m.supportedActions ?? ['generateContent']).includes('generateContent')) ids.push(id);
+    }
+    return ids.sort();
+  });
+}
+
 // ---------- Interactions responses ----------
 // The response shape is still moving (`outputs` in the README, `steps` in the types); read both.
 
