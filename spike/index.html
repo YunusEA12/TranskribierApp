@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mitschrift Spike</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0 auto; padding: 12px; max-width: 900px; line-height: 1.4; }
+  section { border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+  h1 { font-size: 1.3rem; } h2 { font-size: 1.1rem; margin: 0 0 8px; }
+  label { display: block; margin: 6px 0; }
+  input[type=text], input[type=password], input[type=number], textarea, select { width: 100%; box-sizing: border-box; padding: 6px; font-size: 1rem; }
+  button { padding: 8px 12px; margin: 4px 4px 4px 0; font-size: 1rem; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #f4f4f4; padding: 8px; max-height: 400px; overflow: auto; font-size: .85rem; }
+  .info { font-family: monospace; font-size: .9rem; }
+  .err { color: #b00; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 200px; }
+</style>
+</head>
+<body>
+<h1>Mitschrift – Spike (Phase 0)</h1>
+<p>Wegwerf-Seite zum Prüfen der Annahmen aus <code>PLAN.md</code> Abschnitt 7. Keys bleiben nur in diesem Browser (localStorage).</p>
+
+<section>
+  <h2>0. Einstellungen</h2>
+  <label>Gemini API-Key <input id="geminiKey" type="password" autocomplete="off"></label>
+  <div class="row">
+    <label>Modell Engine A <input id="modelA" type="text"></label>
+    <label>Modell Engine B <input id="modelB" type="text"></label>
+  </div>
+  <label>GitHub-Token (fine-grained, nur Vault-Repo) <input id="ghToken" type="password" autocomplete="off"></label>
+  <div class="row">
+    <label>Vault-Repo (owner/repo) <input id="ghRepo" type="text" placeholder="yunusea12/mitschrift-vault"></label>
+    <label>Branch <input id="ghBranch" type="text"></label>
+    <label>Nutzer (für Frontmatter) <input id="userName" type="text" placeholder="yunus"></label>
+  </div>
+  <button id="saveSettings">Speichern</button>
+  <button id="clearSettings">Keys löschen</button>
+</section>
+
+<section>
+  <h2>1. Aufnahme oder Import</h2>
+  <button id="recStart">Aufnahme starten</button>
+  <button id="recStop" disabled>Stopp</button>
+  <span id="recTimer" class="info">00:00</span>
+  <label>Oder Audiodatei importieren <input id="importFile" type="file" accept="audio/*,.m4a,.mp3,.wav,.ogg,.webm,.aac,.flac"></label>
+  <div id="audioInfo" class="info"></div>
+  <audio id="player" controls style="width:100%"></audio>
+  <button id="downloadAudio" disabled>Audio herunterladen</button>
+</section>
+
+<section>
+  <h2>2. Upload zur Files API</h2>
+  <button id="upload" disabled>Hochladen</button>
+  <button id="deleteFile" disabled>Datei bei Google löschen</button>
+  <div id="fileInfo" class="info"></div>
+</section>
+
+<section>
+  <h2>3. Transkription</h2>
+  <div class="row">
+    <label>Erwartete Sprecher (optional) <input id="speakerCount" type="number" min="1" max="8"></label>
+    <label><input id="removeFillers" type="checkbox" checked> Füllwörter entfernen (nur A)</label>
+    <label><input id="diarizeB" type="checkbox" checked> Sprechererkennung (nur B)</label>
+  </div>
+  <label>Glossar (ein Begriff pro Zeile; bei B nur ohne Sprechererkennung) <textarea id="glossary" rows="3"></textarea></label>
+  <button id="runA" disabled>Engine A starten</button>
+  <button id="runB" disabled>Engine B starten</button>
+  <div class="row">
+    <div><h3>Engine A</h3><div id="statusA" class="info"></div><pre id="outA"></pre>
+      <button id="dlA" disabled>A als .md</button><button id="ghA" disabled>A ins Vault schreiben</button></div>
+    <div><h3>Engine B</h3><div id="statusB" class="info"></div><pre id="outB"></pre>
+      <button id="dlB" disabled>B als .md</button><button id="ghB" disabled>B ins Vault schreiben</button></div>
+  </div>
+  <details><summary>Rohantworten</summary><pre id="rawA"></pre><pre id="rawB"></pre></details>
+</section>
+
+<section>
+  <h2>4. GitHub-Schreibtest</h2>
+  <p>Schreibt eine Testdatei mit Umlauten nach <code>Transkripte/_spike/</code>.</p>
+  <button id="ghTest">Testdatei schreiben</button>
+  <div id="ghInfo" class="info"></div>
+</section>
+
+<section>
+  <h2>Protokoll</h2>
+  <button id="copyLog">Protokoll kopieren</button>
+  <pre id="log"></pre>
+</section>
+
+<script type="module">
+import { GoogleGenAI } from 'https://cdn.jsdelivr.net/npm/@google/genai@2.27.0/+esm';
+
+const $ = (id) => document.getElementById(id);
+const DEFAULTS = { modelA: 'gemini-3.8-flash', modelB: 'gemini-3.5-transcribe', ghBranch: 'main' };
+const FIELDS = ['geminiKey', 'modelA', 'modelB', 'ghToken', 'ghRepo', 'ghBranch', 'userName'];
+const SECRET_FIELDS = ['geminiKey', 'ghToken'];
+
+// ---------- logging (never logs secrets) ----------
+function log(msg, isError = false) {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  const pre = $('log');
+  pre.textContent = line + '\n' + pre.textContent;
+  (isError ? console.error : console.log)(line);
+}
+function errText(e) {
+  let s = e?.message ?? String(e);
+  for (const f of SECRET_FIELDS) { const v = $(f).value; if (v) s = s.split(v).join('***'); }
+  return s;
+}
+
+// ---------- settings ----------
+function loadSettings() {
+  for (const f of FIELDS) $(f).value = localStorage.getItem('spike.' + f) ?? DEFAULTS[f] ?? '';
+}
+$('saveSettings').onclick = () => {
+  for (const f of FIELDS) localStorage.setItem('spike.' + f, $(f).value.trim());
+  log('Einstellungen gespeichert.');
+};
+$('clearSettings').onclick = () => {
+  for (const f of SECRET_FIELDS) { localStorage.removeItem('spike.' + f); $(f).value = ''; }
+  log('Keys gelöscht.');
+};
+loadSettings();
+const ai = () => {
+  const apiKey = $('geminiKey').value.trim();
+  if (!apiKey) throw new Error('Kein Gemini-Key eingetragen.');
+  return new GoogleGenAI({ apiKey });
+};
+
+// ---------- audio state ----------
+let audio = null;      // { blob, mimeType, source, name, durationSec }
+let uploaded = null;   // Files API file object
+const results = {};    // 'A' | 'B' -> { title, language, speakers, segments }
+
+function setAudio(a) {
+  audio = a; uploaded = null; delete results.A; delete results.B;
+  $('player').src = URL.createObjectURL(a.blob);
+  $('downloadAudio').disabled = false;
+  $('upload').disabled = false;
+  $('runA').disabled = $('runB').disabled = $('deleteFile').disabled = true;
+  $('fileInfo').textContent = '';
+  showAudioInfo();
+}
+function showAudioInfo() {
+  $('audioInfo').textContent =
+    `Quelle: ${audio.source} | MIME (Blob): "${audio.blob.type}" | MIME (verwendet): "${audio.mimeType}" | ` +
+    `Größe: ${(audio.blob.size / 1024 / 1024).toFixed(2)} MB | Dauer: ${audio.durationSec ? fmtTime(audio.durationSec) : '?'}`;
+}
+const fmtTime = (s) => {
+  s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sec = s % 60;
+  const mmss = `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return h ? `${String(h).padStart(2, '0')}:${mmss}` : mmss;
+};
+// Gemini expects a plain MIME type; strip parameters like ";codecs=opus" but keep what the source reported.
+const baseMime = (t) => (t || '').split(';')[0].trim();
+const EXT_MIME = { m4a: 'audio/m4a', mp3: 'audio/mp3', wav: 'audio/wav', ogg: 'audio/ogg', webm: 'audio/webm', aac: 'audio/aac', flac: 'audio/flac', mp4: 'audio/mp4' };
+
+// ---------- recording ----------
+let recorder = null, chunks = [], recStartedAt = 0, timerId = null, wakeLock = null;
+$('recStart').onclick = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recorder = new MediaRecorder(stream); // no mimeType option: take whatever the browser picks
+    chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      clearInterval(timerId);
+      wakeLock?.release().catch(() => {}); wakeLock = null;
+      const durationSec = (Date.now() - recStartedAt) / 1000;
+      const blob = new Blob(chunks, { type: recorder.mimeType });
+      log(`Aufnahme beendet: recorder.mimeType="${recorder.mimeType}", ${chunks.length} Chunks, ${fmtTime(durationSec)}.`);
+      setAudio({ blob, mimeType: baseMime(recorder.mimeType), source: 'recording', name: 'aufnahme', durationSec });
+      $('recStart').disabled = false; $('recStop').disabled = true;
+    };
+    recorder.start(5000);
+    recStartedAt = Date.now();
+    timerId = setInterval(() => { $('recTimer').textContent = fmtTime((Date.now() - recStartedAt) / 1000); }, 500);
+    try { wakeLock = await navigator.wakeLock?.request('screen'); log(`Wake Lock: ${wakeLock ? 'aktiv' : 'nicht unterstützt'}`); }
+    catch (e) { log('Wake Lock fehlgeschlagen: ' + errText(e)); }
+    $('recStart').disabled = true; $('recStop').disabled = false;
+    log(`Aufnahme gestartet, recorder.mimeType="${recorder.mimeType}".`);
+  } catch (e) { log('Aufnahme fehlgeschlagen: ' + errText(e), true); }
+};
+$('recStop').onclick = () => recorder?.state !== 'inactive' && recorder.stop();
+document.addEventListener('visibilitychange', () => {
+  if (recorder?.state === 'recording') log(`Sichtbarkeit: ${document.visibilityState} (Aufnahme läuft, Zustand: ${recorder.state})`);
+});
+
+// ---------- import ----------
+$('importFile').onchange = () => {
+  const file = $('importFile').files[0];
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const mimeType = baseMime(file.type) || EXT_MIME[ext] || '';
+  log(`Import: "${file.name}", file.type="${file.type}", verwendet="${mimeType}".`);
+  setAudio({ blob: file, mimeType, source: 'import', name: file.name.replace(/\.[^.]+$/, ''), durationSec: 0 });
+  const probe = new Audio(URL.createObjectURL(file));
+  probe.onloadedmetadata = () => { if (isFinite(probe.duration)) { audio.durationSec = probe.duration; showAudioInfo(); } };
+};
+$('downloadAudio').onclick = () => {
+  const ext = Object.entries(EXT_MIME).find(([, m]) => m === audio.mimeType)?.[0] ?? 'audio';
+  download(audio.blob, `${audio.name}.${ext}`);
+};
+
+// ---------- Files API ----------
+$('upload').onclick = async () => {
+  const t0 = performance.now();
+  try {
+    $('upload').disabled = true;
+    $('fileInfo').textContent = 'Lade hoch …';
+    const client = ai();
+    let f = await client.files.upload({ file: audio.blob, config: { mimeType: audio.mimeType, displayName: `spike-${Date.now()}` } });
+    log(`Upload ok in ${((performance.now() - t0) / 1000).toFixed(1)} s: ${f.name}, state=${f.state}, mime=${f.mimeType}`);
+    while (f.state === 'PROCESSING') {
+      await sleep(2000);
+      f = await client.files.get({ name: f.name });
+      $('fileInfo').textContent = `Verarbeite … (${f.state})`;
+    }
+    if (f.state === 'FAILED') throw new Error('Datei-Verarbeitung bei Google fehlgeschlagen.');
+    uploaded = f;
+    $('fileInfo').textContent = `name=${f.name} | uri=${f.uri} | mime=${f.mimeType} | state=${f.state} | sizeBytes=${f.sizeBytes}`;
+    $('runA').disabled = $('runB').disabled = $('deleteFile').disabled = false;
+  } catch (e) {
+    $('fileInfo').innerHTML = `<span class="err">${escapeHtml(errText(e))}</span>`;
+    log('Upload fehlgeschlagen (CORS? Key?): ' + errText(e), true);
+  } finally { $('upload').disabled = false; }
+};
+$('deleteFile').onclick = async () => {
+  try { await ai().files.delete({ name: uploaded.name }); log(`Datei ${uploaded.name} gelöscht.`); uploaded = null;
+    $('runA').disabled = $('runB').disabled = $('deleteFile').disabled = true; $('fileInfo').textContent = 'gelöscht'; }
+  catch (e) { log('Löschen fehlgeschlagen: ' + errText(e), true); }
+};
+
+// ---------- Engine A: flash model with prompt + JSON schema ----------
+const SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', description: 'Topic of the recording, max 8 words, in the language of the recording.' },
+    language: { type: 'string', description: 'Main language as ISO 639-1 code, e.g. "de".' },
+    speakers: { type: 'array', items: { type: 'string' }, description: 'Speaker labels S1..Sn in order of first appearance.' },
+    segments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          speaker: { type: 'string' },
+          start: { type: 'string', description: 'Start time as MM:SS or HH:MM:SS.' },
+          text: { type: 'string' },
+        },
+        required: ['speaker', 'start', 'text'],
+      },
+    },
+  },
+  required: ['title', 'language', 'speakers', 'segments'],
+};
+
+function buildPrompt() {
+  const n = $('speakerCount').value;
+  const glossary = glossaryTerms();
+  return [
+    'Transcribe this audio recording verbatim.',
+    '- Do not summarize, shorten, paraphrase, add or invent anything. Every spoken sentence must appear.',
+    '- Mark unintelligible passages as [unverständlich]. Do not guess.',
+    '- Label speakers S1, S2, … in order of first appearance and keep each label consistent for the whole recording.',
+    n ? `- Expect about ${n} speakers.` : '- Determine the number of speakers yourself (1 to 5).',
+    '- Start a new segment at every speaker change; split long monologues roughly every 60 seconds.',
+    '- "start" is the time the segment begins, as MM:SS (HH:MM:SS above one hour).',
+    '- Keep the original language of the recording, including language switches mid-sentence. Do not translate.',
+    $('removeFillers').checked
+      ? '- Remove pure filler sounds such as "äh", "ähm", "uh", "um". Change nothing else.'
+      : '- Keep filler sounds such as "äh" and "ähm".',
+    glossary.length ? `- Prefer these spellings when they fit the sound: ${glossary.join(', ')}.` : '',
+    '- "title": at most 8 words, in the language of the recording, describing the topic.',
+  ].filter(Boolean).join('\n');
+}
+
+$('runA').onclick = () => runEngine('A', async (client) => {
+  const res = await client.interactions.create({
+    model: $('modelA').value.trim(),
+    input: [
+      { type: 'text', text: buildPrompt() },
+      { type: 'audio', uri: uploaded.uri, mime_type: uploaded.mimeType },
+    ],
+    response_format: { type: 'text', mime_type: 'application/json', schema: SCHEMA },
+  });
+  const text = extractText(res);
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { throw new Error('Antwort ist kein gültiges JSON (abgeschnitten?). Siehe Rohantwort.'); }
+  return { raw: res, result: parsed };
+});
+
+// ---------- Engine B: dedicated transcribe model ----------
+$('runB').onclick = () => runEngine('B', async (client) => {
+  const diarize = $('diarizeB').checked;
+  const glossary = glossaryTerms();
+  const transcription_config = {
+    mode: { type: 'verbatim', timestamp_granularities: ['word'], ...(diarize ? { diarization_mode: 'speaker' } : {}) },
+  };
+  if (!diarize && glossary.length) transcription_config.custom_vocabulary = glossary;
+  const res = await client.interactions.create({
+    model: $('modelB').value.trim(),
+    input: [{ type: 'audio', uri: uploaded.uri, mime_type: uploaded.mimeType }],
+    generation_config: { transcription_config },
+  });
+  return { raw: res, result: wordsToSegments(res) };
+});
+
+async function runEngine(id, fn) {
+  const status = $('status' + id), out = $('out' + id);
+  const t0 = performance.now();
+  const tick = setInterval(() => { status.textContent = `läuft … ${fmtTime((performance.now() - t0) / 1000)}`; }, 1000);
+  out.textContent = ''; $('raw' + id).textContent = '';
+  $('dl' + id).disabled = $('gh' + id).disabled = true;
+  try {
+    const { raw, result } = await fn(ai());
+    const secs = (performance.now() - t0) / 1000;
+    $('raw' + id).textContent = `--- Engine ${id} ---\n` + JSON.stringify(raw, null, 2);
+    results[id] = { ...result, model: $('model' + id).value.trim() };
+    status.textContent = `fertig in ${fmtTime(secs)} | Segmente: ${result.segments.length} | Sprecher: ${result.speakers.join(', ')} | ` +
+      `Zeichen: ${result.segments.reduce((n, s) => n + s.text.length, 0)} | [unverständlich]: ${countUnclear(result)} | Usage: ${JSON.stringify(raw.usage ?? {})}`;
+    out.textContent = `# ${result.title}\n\n` + result.segments.map((s) => `[${s.start}] ${s.speaker}: ${s.text}`).join('\n\n');
+    $('dl' + id).disabled = $('gh' + id).disabled = false;
+    log(`Engine ${id} fertig in ${secs.toFixed(1)} s.`);
+  } catch (e) {
+    status.innerHTML = `<span class="err">Fehler: ${escapeHtml(errText(e))}</span>`;
+    log(`Engine ${id} fehlgeschlagen nach ${((performance.now() - t0) / 1000).toFixed(1)} s: ${errText(e)}`, true);
+  } finally { clearInterval(tick); }
+}
+
+// The response shape of the Interactions API is still moving (outputs vs. steps); collect text from wherever it is.
+function textContents(res) {
+  const items = [];
+  const visit = (contents) => { for (const c of contents ?? []) if (c?.type === 'text') items.push(c); };
+  if (Array.isArray(res.outputs)) visit(res.outputs);
+  for (const step of res.steps ?? []) if (step.type !== 'user_input') visit(step.content);
+  return items;
+}
+function extractText(res) {
+  if (typeof res.output_text === 'string' && res.output_text) return res.output_text;
+  return textContents(res).map((c) => c.text).join('');
+}
+
+// Engine B returns text plus word_info annotations (speaker, start_offset like "12.34s").
+function wordsToSegments(res) {
+  const words = textContents(res).flatMap((c) => (c.annotations ?? []).filter((a) => a.type === 'word_info'));
+  const text = extractText(res);
+  if (!words.length) {
+    log('Engine B: keine word_info-Annotationen gefunden, nur Fließtext.');
+    return { title: '(ohne Titel)', language: '', speakers: ['S1'], segments: [{ speaker: 'S1', start: '00:00', text }] };
+  }
+  const labelMap = new Map(); // spk_1 -> S1
+  const label = (spk) => {
+    const key = spk ?? 'spk_?';
+    if (!labelMap.has(key)) labelMap.set(key, `S${labelMap.size + 1}`);
+    return labelMap.get(key);
+  };
+  const segments = [];
+  let cur = null;
+  for (const w of words) {
+    const sp = label(w.speaker);
+    const start = parseOffset(w.start_offset);
+    if (!cur || cur.speaker !== sp || start - cur.startSec > 60) {
+      cur = { speaker: sp, startSec: start, words: [] };
+      segments.push(cur);
+    }
+    cur.words.push(w.text ?? '');
+  }
+  return {
+    title: '(ohne Titel – Engine B liefert keinen)',
+    language: '',
+    speakers: [...labelMap.values()],
+    segments: segments.map((s) => ({ speaker: s.speaker, start: fmtTime(s.startSec), text: s.words.join(' ').replace(/\s+([,.!?;:])/g, '$1') })),
+  };
+}
+const parseOffset = (o) => (o ? parseFloat(String(o).replace(/s$/, '')) || 0 : 0);
+const countUnclear = (r) => r.segments.reduce((n, s) => n + (s.text.match(/\[unverständlich\]/g)?.length ?? 0), 0);
+const glossaryTerms = () => $('glossary').value.split('\n').map((s) => s.trim()).filter(Boolean);
+
+// ---------- Markdown (format from PLAN.md 4.3) ----------
+function toMarkdown(r) {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const id = `${date}T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const names = Object.fromEntries(r.speakers.map((s, i) => [s, `Sprecher ${i + 1}`]));
+  const yamlStr = (s) => JSON.stringify(s);
+  const fm = [
+    '---',
+    `id: ${id}`,
+    `title: ${yamlStr(r.title)}`,
+    `date: ${date}`,
+    `time: "${time}"`,
+    `duration_min: ${Math.round((audio?.durationSec ?? 0) / 60)}`,
+    `user: ${$('userName').value.trim() || 'unbekannt'}`,
+    `language: ${r.language || 'und'}`,
+    'speakers:',
+    ...r.speakers.map((s) => `  ${s}: ${names[s]}`),
+    `model: ${r.model}`,
+    `source: ${audio?.source ?? 'import'}`,
+    'tags: [transkript]',
+    '---',
+  ].join('\n');
+  const body = r.segments.map((s) => `**[${s.start}] ${names[s.speaker] ?? s.speaker}:** ${s.text}`).join('\n\n');
+  const safeTitle = r.title.replace(/[\/\\:*?"<>|#^\[\]]/g, '').replace(/\s+/g, ' ').trim() || 'Transkript';
+  return { fileName: `${date} ${time.replace(':', '')} ${safeTitle}.md`, content: `${fm}\n\n# ${r.title}\n\n${body}\n` };
+}
+for (const id of ['A', 'B']) {
+  $('dl' + id).onclick = () => { const md = toMarkdown(results[id]); download(new Blob([md.content], { type: 'text/markdown' }), md.fileName); };
+  $('gh' + id).onclick = async () => {
+    const md = toMarkdown(results[id]);
+    await ghWrite(`Transkripte/_spike/Engine ${id} ${md.fileName}`, md.content, `Spike: Engine ${id} transcript`);
+  };
+}
+
+// ---------- GitHub ----------
+const utf8ToBase64 = (s) => { const b = new TextEncoder().encode(s); let bin = ''; for (const x of b) bin += String.fromCharCode(x); return btoa(bin); };
+async function gh(path, init = {}) {
+  const token = $('ghToken').value.trim();
+  if (!token) throw new Error('Kein GitHub-Token eingetragen.');
+  return fetch(`https://api.github.com${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(init.headers ?? {}) },
+  });
+}
+async function ghWrite(filePath, content, message) {
+  const repo = $('ghRepo').value.trim(), branch = $('ghBranch').value.trim() || 'main';
+  const url = `/repos/${repo}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}`;
+  try {
+    let sha;
+    const existing = await gh(`${url}?ref=${encodeURIComponent(branch)}`);
+    if (existing.ok) sha = (await existing.json()).sha;
+    else if (existing.status !== 404) throw new Error(`GET ${existing.status}: ${await existing.text()}`);
+    const res = await gh(url, { method: 'PUT', body: JSON.stringify({ message, content: utf8ToBase64(content), branch, ...(sha ? { sha } : {}) }) });
+    if (!res.ok) throw new Error(`PUT ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    $('ghInfo').innerHTML = `Geschrieben: <a href="${data.content.html_url}" target="_blank">${escapeHtml(filePath)}</a>`;
+    log(`GitHub: ${filePath} geschrieben (${sha ? 'Update' : 'neu'}).`);
+  } catch (e) {
+    $('ghInfo').innerHTML = `<span class="err">${escapeHtml(errText(e))}</span>`;
+    log('GitHub-Schreiben fehlgeschlagen: ' + errText(e), true);
+  }
+}
+$('ghTest').onclick = () => ghWrite(
+  'Transkripte/_spike/Umlaut-Test äöü ß.md',
+  `---\ntitle: "Umlaut-Test äöüÄÖÜß"\n---\n\n# Umlaut-Test\n\nÄrger über Öl, süße Grüße – „Anführungszeichen“ … ${new Date().toISOString()}\n`,
+  'Spike: umlaut test',
+);
+
+// ---------- helpers ----------
+function download(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+$('copyLog').onclick = () => navigator.clipboard.writeText($('log').textContent).then(() => log('Protokoll kopiert.'));
+log(`Bereit. UA: ${navigator.userAgent}`);
+log(`MediaRecorder: ${'MediaRecorder' in window} | webm: ${window.MediaRecorder?.isTypeSupported?.('audio/webm')} | mp4: ${window.MediaRecorder?.isTypeSupported?.('audio/mp4')} | Wake Lock: ${'wakeLock' in navigator}`);
+</script>
+</body>
+</html>
