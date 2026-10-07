@@ -59,13 +59,16 @@ export async function checkModel(ai: GoogleGenAI, model: string): Promise<void> 
   await geminiCall(() => ai.models.get({ model }));
 }
 
+/** Variants that cannot transcribe audio (agents, image/speech generation, embeddings). */
+export const NOT_FOR_AUDIO = /agent|image|tts|embedding|robotics|computer-use/i;
+
 /** Model ids this key can use for content generation, e.g. "gemini-3.8-flash". */
 export async function listModels(ai: GoogleGenAI): Promise<string[]> {
   return geminiCall(async () => {
     const ids: string[] = [];
     for await (const m of await ai.models.list()) {
       const id = m.name?.replace(/^models\//, '');
-      if (id?.startsWith('gemini') && (m.supportedActions ?? ['generateContent']).includes('generateContent')) ids.push(id);
+      if (id?.startsWith('gemini') && !NOT_FOR_AUDIO.test(id) && (m.supportedActions ?? ['generateContent']).includes('generateContent')) ids.push(id);
     }
     return ids.sort();
   });
@@ -131,6 +134,32 @@ export async function runInBackground(ai: GoogleGenAI, params: CreateParams, run
     }
   }
   throw new InteractionFailedError('Gemini braucht ungewöhnlich lange. Bitte später erneut versuchen.');
+}
+
+/** Gemini says the model cannot take audio, e.g. "Audio input modality is not enabled for models/…". */
+export function isAudioUnsupported(e: unknown): boolean {
+  return e instanceof HttpError && e.status === 400 && /modality is not enabled|does not support audio/i.test(e.message);
+}
+
+/**
+ * Runs a transcription in the background (see runInBackground). If Gemini rejects the audio in that
+ * mode, the same request runs once as a normal request before giving up with a clear message.
+ */
+export async function runTranscription(ai: GoogleGenAI, params: CreateParams, run: BackgroundRun, model: string): Promise<unknown> {
+  try {
+    return await runInBackground(ai, params, run);
+  } catch (e) {
+    if (!isAudioUnsupported(e)) throw e;
+    console.warn(`Background run rejected audio for ${model}; trying a normal request`, e);
+  }
+  try {
+    return await geminiCall(() => ai.interactions.create(params));
+  } catch (e) {
+    if (isAudioUnsupported(e)) {
+      throw new UserError(`Das Modell „${model}“ kann keine Audiodateien verarbeiten. In den Einstellungen auf „Key prüfen“ tippen, dort wird ein passendes vorgeschlagen.`);
+    }
+    throw e;
+  }
 }
 
 // ---------- Interactions responses ----------

@@ -1,5 +1,5 @@
 import { HttpError, toUserMessage } from '../lib/errors';
-import { checkModel, createGeminiClient, listModels } from '../transcription/gemini';
+import { checkModel, createGeminiClient, listModels, NOT_FOR_AUDIO } from '../transcription/gemini';
 import { clientFromSettings } from '../vault/vaultRepo';
 import { storageConnected, type Settings } from './settingsStore';
 
@@ -19,7 +19,7 @@ export interface GeminiReport {
 /** Best guess for a current general-purpose flash model among the ids a key can use. */
 export function suggestFlashModel(models: string[], lite = false): string | undefined {
   const candidates = models.filter(
-    (m) => /flash/.test(m) && lite === /lite/.test(m) && !/(image|tts|live|audio|embedding|thinking|exp)/.test(m),
+    (m) => /flash/.test(m) && lite === /lite/.test(m) && !NOT_FOR_AUDIO.test(m) && !/(live|audio|thinking|exp)/.test(m),
   );
   const stable = candidates.filter((m) => !/preview/.test(m));
   const pool = stable.length ? stable : candidates;
@@ -46,6 +46,16 @@ export async function testGemini(s: Settings): Promise<GeminiReport> {
   if (s.engine === 'transcribe') configured.push({ key: 'transcribeModel', id: s.transcribeModel.trim() });
   if (s.fallbackModel.trim()) configured.push({ key: 'fallbackModel', id: s.fallbackModel.trim() });
   for (const { key, id } of configured) {
+    if (key !== 'transcribeModel' && NOT_FOR_AUDIO.test(id)) {
+      const suggestion = suggestFlashModel(models, key === 'fallbackModel');
+      checks.push({
+        label: `Modell ${id}`,
+        ok: false,
+        message: `kann keine Audiodateien verarbeiten.${suggestion ? ` Vorschlag: ${suggestion}.` : ''}`,
+        fix: suggestion ? { key, value: suggestion } : undefined,
+      });
+      continue;
+    }
     try {
       await checkModel(ai, id);
       checks.push({ label: `Modell ${id}`, ok: true, message: 'verfügbar.' });

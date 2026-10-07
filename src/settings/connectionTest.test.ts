@@ -7,6 +7,7 @@ const models = [
   'gemini-3.8-flash-lite',
   'gemini-3.10-flash-preview',
   'gemini-3.8-flash-image',
+  'gemini-3.8-flash-agent',
   'gemini-3.8-pro',
 ];
 
@@ -17,6 +18,10 @@ describe('suggestFlashModel', () => {
   it('picks a lite model for the fallback', () => {
     expect(suggestFlashModel(models, true)).toBe('gemini-3.8-flash-lite');
   });
+  it('never suggests agent variants, which cannot take audio', () => {
+    expect(suggestFlashModel(['gemini-3.8-flash-agent', 'gemini-3.8-flash-preview-09'])).toBe('gemini-3.8-flash-preview-09');
+  });
+
   it('uses previews only when nothing stable exists', () => {
     expect(suggestFlashModel(['gemini-4.0-flash-preview'])).toBe('gemini-4.0-flash-preview');
     expect(suggestFlashModel(['gemini-3.8-pro'])).toBeUndefined();

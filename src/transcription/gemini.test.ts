@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GoogleGenAI } from '@google/genai';
-import { InteractionFailedError, runInBackground } from './gemini';
+import { HttpError } from '../lib/errors';
+import { InteractionFailedError, runInBackground, runTranscription } from './gemini';
 
 afterEach(() => vi.useRealTimers());
 
@@ -55,5 +56,25 @@ describe('runInBackground', () => {
     const assertion = expect(p).rejects.toBeInstanceOf(InteractionFailedError);
     await settle(p.catch(() => undefined));
     await assertion;
+  });
+});
+
+describe('runTranscription', () => {
+  const modality = () => {
+    throw new HttpError('gemini', 400, 'got status: 400. {"error":{"message":"Audio input modality is not enabled for models/x-agent"}}');
+  };
+
+  it('retries as a normal request when the background run rejects audio', async () => {
+    const ai = fakeAi(() => ({ status: 'completed', output_text: 'ok' }), () => ({}));
+    ai.interactions.create.mockImplementationOnce(async () => modality());
+    const res = await runTranscription(ai, { model: 'm', input: 'x' }, {}, 'm');
+    expect(res).toMatchObject({ status: 'completed' });
+    expect(ai.interactions.create.mock.calls[0]![0]).toMatchObject({ background: true });
+    expect(ai.interactions.create.mock.calls[1]![0]).not.toHaveProperty('background');
+  });
+
+  it('explains when the model cannot take audio at all', async () => {
+    const ai = fakeAi(modality, () => ({}));
+    await expect(runTranscription(ai, { model: 'm', input: 'x' }, {}, 'gemini-x-agent')).rejects.toThrow(/kann keine Audiodateien/);
   });
 });

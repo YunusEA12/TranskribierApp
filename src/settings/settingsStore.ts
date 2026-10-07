@@ -50,6 +50,9 @@ export function getSettings(): Settings {
   cached = { ...DEFAULT_SETTINGS, ...stored };
   if (!cached.vaultRepo.trim()) cached.vaultRepo = DEFAULT_SETTINGS.vaultRepo;
   if (!cached.vaultBranch.trim()) cached.vaultBranch = DEFAULT_SETTINGS.vaultBranch;
+  // "-agent" variants cannot take audio; an earlier suggestion could have picked one.
+  cached.flashModel = cached.flashModel.replace(/-agent$/, '');
+  cached.fallbackModel = cached.fallbackModel.replace(/-agent$/, '');
   return cached;
 }
 
