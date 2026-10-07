@@ -1,7 +1,7 @@
 // Executes jobs step by step. Runs in the page; a job interrupted by closing the app resumes on the next start.
 
 import { db } from '../db/db';
-import { isNetworkError, toUserMessage, UserError } from '../lib/errors';
+import { toUserMessage, UserError } from '../lib/errors';
 import { getSettings, missingSettings, storageConnected } from '../settings/settingsStore';
 import { createEngine } from '../transcription/createEngine';
 import { createGeminiClient, deleteUpload, uploadAudio } from '../transcription/gemini';
@@ -149,8 +149,7 @@ async function runJob(id: string): Promise<void> {
     } catch (e) {
       console.error(`Job ${id} failed at ${step}`, e);
       const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
-      // After a dropped connection the interaction keeps running at Google; anything else needs a fresh start.
-      if (step === 'transcribing' && !isNetworkError(e)) Object.assign(patch, { interactionId: undefined, interactionModel: undefined, remoteStatus: undefined, lastPollAt: undefined });
+      if (step === 'transcribing') patch.progressChars = undefined;
       await db.jobs.update(id, patch);
       return;
     }
@@ -168,13 +167,17 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
     }
     case 'transcribing': {
       const engine = createEngine(ai, settings);
+      let lastWrite = 0;
       const result = await engine.transcribe(
         job.upload!,
-        { speakerCount: job.speakerCount, glossary: [], removeFillers: settings.removeFillers, durationSec: job.durationSec },
+        { speakerCount: job.speakerCount, glossary: [], removeFillers: settings.removeFillers },
         {
-          resume: job.interactionId && job.interactionModel ? { id: job.interactionId, model: job.interactionModel } : undefined,
-          onStarted: (id, model) => db.jobs.update(job.id, { interactionId: id, interactionModel: model }).then(() => undefined),
-          onPoll: (status) => db.jobs.update(job.id, { remoteStatus: status, lastPollAt: Date.now() }).then(() => undefined),
+          // Progress for the job card, written at most once a second.
+          onProgress: (chars) => {
+            if (Date.now() - lastWrite < 1000) return;
+            lastWrite = Date.now();
+            void db.jobs.update(job.id, { progressChars: chars });
+          },
         },
       );
       await db.jobs.update(job.id, transcriptionDone(result, engine.model, Date.now()));

@@ -1,8 +1,8 @@
 // Shared Gemini plumbing: client, Files API upload/delete, reading Interactions responses.
 // Together with the engines, the only place in the app that talks to Gemini.
 
-import { GoogleGenAI } from '@google/genai';
-import { HttpError, isNetworkError, UserError } from '../lib/errors';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { HttpError, UserError } from '../lib/errors';
 import type { UploadedAudio } from '../jobs/queue';
 
 export function createGeminiClient(apiKey: string): GoogleGenAI {
@@ -33,8 +33,7 @@ const MAX_PROCESSING_MS = 10 * 60 * 1000;
 // Every request gets a time limit: on iOS a request can hang forever after the app was in the
 // background, and a hanging request would block all following jobs.
 const CLIENT_TIMEOUT_MS = 20 * 60 * 1000; // default for everything, long enough for big uploads
-const CREATE_TIMEOUT_MS = 90 * 1000;
-const DIRECT_TIMEOUT_MS = 15 * 60 * 1000;
+
 
 export async function uploadAudio(ai: GoogleGenAI, blob: Blob, mimeType: string): Promise<UploadedAudio> {
   return geminiCall(async () => {
@@ -80,79 +79,20 @@ export async function listModels(ai: GoogleGenAI): Promise<string[]> {
   });
 }
 
-// ---------- Background interactions ----------
-// A long transcription can take minutes. iOS suspends a PWA that goes to the background and the
-// browser drops the open request, so the interaction runs at Google in the background and the app
-// only polls. The id is persisted by the caller, so polling resumes after the app was closed.
+// ---------- Streaming generation ----------
+// Transcripts come from the standard generateContent API, streamed: text arrives piece by piece, so the
+// app can show progress and a slow answer is distinguishable from a stuck one. (The newer Interactions
+// API was tried first; its background mode rejected audio and its direct requests were very slow on iOS.)
 
-export class InteractionFailedError extends UserError {}
+/** Before the first piece of text Gemini listens to the whole recording; after that text should flow steadily. */
+const FIRST_CHUNK_MS = 5 * 60 * 1000;
+const NEXT_CHUNK_MS = 2 * 60 * 1000;
 
-export interface BackgroundRun {
-  /** Id of an interaction started earlier for the same request; polling resumes there. */
-  resumeId?: string;
-  /** Called once the interaction is accepted, so the caller can persist its id. */
-  onStarted?: (id: string) => Promise<void>;
-  /** Called with Gemini's status after every poll, so the UI can show it. */
-  onPoll?: (status: string) => Promise<void> | void;
-  /** Give up waiting after this long (counted from this call). */
-  maxWaitMs?: number;
-}
-
-/** The background run did not finish in time; the caller may try a normal request instead. */
-export class BackgroundTimeoutError extends Error {}
-
-const POLL_FIRST_MS = 3000;
-const POLL_MAX_MS = 15000;
-const MAX_POLL_NETWORK_ERRORS = 8;
-const DEFAULT_MAX_WAIT_MS = 2 * 60 * 60 * 1000;
-const POLL_TIMEOUT_MS = 30000;
-
-type CreateParams = Parameters<GoogleGenAI['interactions']['create']>[0];
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-export async function runInBackground(ai: GoogleGenAI, params: CreateParams, run: BackgroundRun = {}): Promise<unknown> {
-  let id = run.resumeId;
-  if (!id) {
-    const created = (await geminiCall(() =>
-      ai.interactions.create({ ...params, background: true } as CreateParams, { timeout: CREATE_TIMEOUT_MS }),
-    )) as { id?: string; status?: string };
-    if (created.status === 'completed') return created;
-    if (!created.id) throw new InteractionFailedError('Gemini hat keine Auftragsnummer zurückgegeben.');
-    id = created.id;
-    await run.onStarted?.(id);
-  }
-
-  const started = Date.now();
-  const maxWait = run.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
-  let delay = POLL_FIRST_MS;
-  let networkErrors = 0;
-  while (Date.now() - started < maxWait) {
-    await sleep(delay);
-    delay = Math.min(POLL_MAX_MS, Math.round(delay * 1.4));
-    let interaction: { status?: string };
-    try {
-      interaction = (await geminiCall(() => ai.interactions.get(id, undefined, { timeout: POLL_TIMEOUT_MS, maxRetries: 0 }))) as { status?: string };
-      networkErrors = 0;
-      await run.onPoll?.(interaction.status ?? 'unbekannt');
-    } catch (e) {
-      // A poll that died with the app in the background is harmless; ask again.
-      if (isNetworkError(e) && ++networkErrors < MAX_POLL_NETWORK_ERRORS) continue;
-      throw e;
-    }
-    switch (interaction.status) {
-      case 'completed':
-        return interaction;
-      case 'failed':
-      case 'cancelled':
-      case 'incomplete':
-      case 'budget_exceeded':
-        throw new InteractionFailedError(`Gemini hat die Transkription abgebrochen (Status: ${interaction.status}).`);
-    }
-  }
-  // Cancel so the abandoned run does not keep using quota; failures here do not matter.
-  await ai.interactions.cancel(id).catch(() => undefined);
-  throw new BackgroundTimeoutError(`Background interaction ${id} did not finish within ${Math.round(maxWait / 1000)} s`);
+export interface StreamOptions {
+  /** JSON schema the answer must follow. */
+  jsonSchema?: unknown;
+  /** Called with the number of characters received so far. */
+  onProgress?: (chars: number) => void;
 }
 
 /** Gemini says the model cannot take audio, e.g. "Audio input modality is not enabled for models/…". */
@@ -160,22 +100,48 @@ export function isAudioUnsupported(e: unknown): boolean {
   return e instanceof HttpError && e.status === 400 && /modality is not enabled|does not support audio/i.test(e.message);
 }
 
-/**
- * Runs a transcription in the background (see runInBackground). If Gemini rejects the audio in that
- * mode, or the background run gets stuck, the same request runs once as a normal request (the app
- * has to stay open for that one) before giving up with a clear message.
- */
-export async function runTranscription(ai: GoogleGenAI, params: CreateParams, run: BackgroundRun, model: string): Promise<unknown> {
+function isThinkingUnsupported(e: unknown): boolean {
+  return e instanceof HttpError && e.status === 400 && /thinking/i.test(e.message);
+}
+
+/** Text answer for a prompt plus an uploaded audio file. Low thinking: a verbatim transcript needs no reasoning. */
+export async function streamText(ai: GoogleGenAI, model: string, prompt: string, audio: UploadedAudio, options: StreamOptions = {}): Promise<string> {
+  const run = (withThinking: boolean) =>
+    geminiCall(async () => {
+      // Watchdog: give up if Gemini goes quiet, instead of waiting for the 20-minute client limit.
+      const controller = new AbortController();
+      let stalled = false;
+      let timer = setTimeout(() => ((stalled = true), controller.abort()), FIRST_CHUNK_MS);
+      try {
+        const stream = await ai.models.generateContentStream({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }, { fileData: { fileUri: audio.uri, mimeType: audio.mimeType } }] }],
+          config: {
+            abortSignal: controller.signal,
+            ...(options.jsonSchema ? { responseMimeType: 'application/json', responseJsonSchema: options.jsonSchema } : {}),
+            ...(withThinking ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
+          },
+        });
+        let text = '';
+        for await (const chunk of stream) {
+          clearTimeout(timer);
+          timer = setTimeout(() => ((stalled = true), controller.abort()), NEXT_CHUNK_MS);
+          text += chunk.text ?? '';
+          options.onProgress?.(text.length);
+        }
+        return text;
+      } catch (e) {
+        if (stalled) throw new UserError('Gemini hat zu lange nichts geschickt. Bitte „Erneut versuchen“, mit geöffneter App.');
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    });
   try {
-    return await runInBackground(ai, params, run);
+    return await run(true);
   } catch (e) {
-    if (!isAudioUnsupported(e) && !(e instanceof BackgroundTimeoutError)) throw e;
-    console.warn(`Background run failed for ${model}; trying a normal request`, e);
-    await run.onPoll?.('direct');
-  }
-  try {
-    return await geminiCall(() => ai.interactions.create(params, { timeout: DIRECT_TIMEOUT_MS }));
-  } catch (e) {
+    // Older models do not know thinking levels; ask again without.
+    if (isThinkingUnsupported(e)) return run(false);
     if (isAudioUnsupported(e)) {
       throw new UserError(`Das Modell „${model}“ kann keine Audiodateien verarbeiten. In den Einstellungen auf „Key prüfen“ tippen, dort wird ein passendes vorgeschlagen.`);
     }

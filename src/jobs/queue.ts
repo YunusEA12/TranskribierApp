@@ -30,12 +30,8 @@ export interface Job {
   fileName?: string;
   speakerCount?: number;
   upload?: UploadedAudio;
-  /** Gemini interaction running in the background for this job, so polling can resume after the app was closed. */
-  interactionId?: string;
-  interactionModel?: string;
-  /** Gemini's last reported status while transcribing ("queued", "in_progress", "direct" for a normal request). */
-  remoteStatus?: string;
-  lastPollAt?: number;
+  /** Characters of transcript Gemini has sent so far (progress display while transcribing). */
+  progressChars?: number;
   result?: TranscriptResult;
   model?: string;
   vaultPath?: string;
@@ -91,12 +87,11 @@ export function stepStarted(step: Step, now: number): Partial<Job> {
 }
 
 export function uploadDone(upload: UploadedAudio, now: number): Partial<Job> {
-  // A new upload means a new file; an interaction on the old one is useless.
-  return { status: 'transcribing', upload, interactionId: undefined, interactionModel: undefined, updatedAt: now };
+  return { status: 'transcribing', upload, updatedAt: now };
 }
 
 export function transcriptionDone(result: TranscriptResult, model: string, now: number): Partial<Job> {
-  return { status: 'saving', result, model, interactionId: undefined, interactionModel: undefined, remoteStatus: undefined, lastPollAt: undefined, updatedAt: now };
+  return { status: 'saving', result, model, progressChars: undefined, updatedAt: now };
 }
 
 export function savingDone(vaultPath: string, now: number): Partial<Job> {

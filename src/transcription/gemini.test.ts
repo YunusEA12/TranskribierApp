@@ -1,96 +1,63 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { GoogleGenAI } from '@google/genai';
 import { HttpError } from '../lib/errors';
-import { InteractionFailedError, runInBackground, runTranscription } from './gemini';
+import { streamText } from './gemini';
 
-afterEach(() => vi.useRealTimers());
+const audio = { name: 'files/a', uri: 'https://x/files/a', mimeType: 'audio/mp4', uploadedAt: 0 };
 
-function fakeAi(create: () => unknown, get: () => unknown) {
-  return { interactions: { create: vi.fn(async () => create()), get: vi.fn(async () => get()), cancel: vi.fn(async () => ({})) } } as unknown as GoogleGenAI & {
-    interactions: { create: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> };
-  };
+async function* chunks(...texts: string[]) {
+  for (const text of texts) yield { text };
 }
 
-async function settle<T>(p: Promise<T>): Promise<T> {
-  for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(20000);
-  return p;
+function fakeAi(impl: (params: Record<string, unknown>) => Promise<AsyncGenerator<{ text: string }>>) {
+  const generateContentStream = vi.fn(impl);
+  return { ai: { models: { generateContentStream } } as unknown as GoogleGenAI, generateContentStream };
 }
 
-describe('runInBackground', () => {
-  it('starts in the background, reports the id and polls until completed', async () => {
-    vi.useFakeTimers();
-    const states = ['in_progress', 'in_progress', 'completed'];
-    const ai = fakeAi(() => ({ id: 'i1', status: 'in_progress' }), () => ({ id: 'i1', status: states.shift(), output_text: 'x' }));
-    const started: string[] = [];
-    const res = await settle(runInBackground(ai, { model: 'm', input: 'x' }, { onStarted: async (id) => void started.push(id) }));
-    expect(started).toEqual(['i1']);
-    expect(ai.interactions.create.mock.calls[0]![0]).toMatchObject({ background: true });
-    expect(res).toMatchObject({ status: 'completed' });
+describe('streamText', () => {
+  it('sends prompt and audio, asks for low thinking and JSON, and joins the streamed text', async () => {
+    const { ai, generateContentStream } = fakeAi(async () => chunks('{"a":', '1}'));
+    const progress: number[] = [];
+    const text = await streamText(ai, 'gemini-x', 'Transkribiere', audio, { jsonSchema: { type: 'object' }, onProgress: (n) => progress.push(n) });
+    expect(text).toBe('{"a":1}');
+    expect(progress).toEqual([5, 7]);
+    const params = generateContentStream.mock.calls[0]![0] as { model: string; contents: unknown; config: Record<string, unknown> };
+    expect(params.model).toBe('gemini-x');
+    expect(params.contents).toEqual([
+      { role: 'user', parts: [{ text: 'Transkribiere' }, { fileData: { fileUri: audio.uri, mimeType: 'audio/mp4' } }] },
+    ]);
+    expect(params.config).toMatchObject({ responseMimeType: 'application/json', responseJsonSchema: { type: 'object' }, thinkingConfig: { thinkingLevel: 'LOW' } });
   });
 
-  it('resumes an existing interaction without creating a new one', async () => {
-    vi.useFakeTimers();
-    const ai = fakeAi(() => ({}), () => ({ status: 'completed' }));
-    await settle(runInBackground(ai, { model: 'm', input: 'x' }, { resumeId: 'old' }));
-    expect(ai.interactions.create).not.toHaveBeenCalled();
-    expect(ai.interactions.get.mock.calls[0]![0]).toBe('old');
+  it('retries without thinking settings when the model does not support them', async () => {
+    const { ai, generateContentStream } = fakeAi(async (params) => {
+      if ((params.config as Record<string, unknown>).thinkingConfig) throw new HttpError('gemini', 400, 'Thinking level is not supported for this model.');
+      return chunks('ok');
+    });
+    await expect(streamText(ai, 'm', 'p', audio)).resolves.toBe('ok');
+    expect(generateContentStream).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps polling through dropped connections', async () => {
-    vi.useFakeTimers();
-    let calls = 0;
-    const ai = fakeAi(
-      () => ({ id: 'i', status: 'in_progress' }),
-      () => {
-        if (++calls < 3) throw new Error('Unexpected HTTP client error: TypeError: Load failed');
-        return { status: 'completed' };
-      },
-    );
-    await expect(settle(runInBackground(ai, { model: 'm', input: 'x' }))).resolves.toMatchObject({ status: 'completed' });
+  it('explains when the model cannot take audio', async () => {
+    const { ai } = fakeAi(async () => {
+      throw new HttpError('gemini', 400, 'Audio input modality is not enabled for models/m');
+    });
+    await expect(streamText(ai, 'm', 'p', audio)).rejects.toThrow(/kann keine Audiodateien/);
   });
 
-  it('fails when Gemini gives up', async () => {
+  it('gives up when Gemini goes quiet', async () => {
     vi.useFakeTimers();
-    const ai = fakeAi(() => ({ id: 'i', status: 'in_progress' }), () => ({ status: 'failed' }));
-    const p = runInBackground(ai, { model: 'm', input: 'x' });
-    const assertion = expect(p).rejects.toBeInstanceOf(InteractionFailedError);
-    await settle(p.catch(() => undefined));
+    const { ai } = fakeAi(async (params) => {
+      const signal = (params.config as { abortSignal: AbortSignal }).abortSignal;
+      return (async function* () {
+        await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+        yield { text: '' };
+      })();
+    });
+    const p = streamText(ai, 'm', 'p', audio);
+    const assertion = expect(p).rejects.toThrow(/zu lange nichts geschickt/);
+    await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
     await assertion;
-  });
-});
-
-describe('runTranscription', () => {
-  const modality = () => {
-    throw new HttpError('gemini', 400, 'got status: 400. {"error":{"message":"Audio input modality is not enabled for models/x-agent"}}');
-  };
-
-  it('retries as a normal request when the background run rejects audio', async () => {
-    const ai = fakeAi(() => ({ status: 'completed', output_text: 'ok' }), () => ({}));
-    ai.interactions.create.mockImplementationOnce(async () => modality());
-    const res = await runTranscription(ai, { model: 'm', input: 'x' }, {}, 'm');
-    expect(res).toMatchObject({ status: 'completed' });
-    expect(ai.interactions.create.mock.calls[0]![0]).toMatchObject({ background: true });
-    expect(ai.interactions.create.mock.calls[1]![0]).not.toHaveProperty('background');
-  });
-
-  it('explains when the model cannot take audio at all', async () => {
-    const ai = fakeAi(modality, () => ({}));
-    await expect(runTranscription(ai, { model: 'm', input: 'x' }, {}, 'gemini-x-agent')).rejects.toThrow(/kann keine Audiodateien/);
-  });
-});
-
-describe('runTranscription with a stuck background run', () => {
-  it('cancels it and makes a normal request', async () => {
-    vi.useFakeTimers();
-    const ai = fakeAi(() => ({ id: 'slow', status: 'in_progress' }), () => ({ status: 'in_progress' }));
-    ai.interactions.create.mockImplementationOnce(async () => ({ id: 'slow', status: 'in_progress' }));
-    ai.interactions.create.mockImplementationOnce(async () => ({ status: 'completed', output_text: 'direct' }));
-    const statuses: string[] = [];
-    const p = runTranscription(ai, { model: 'm', input: 'x' }, { maxWaitMs: 60_000, onPoll: (s) => void statuses.push(s) }, 'm');
-    for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(10_000);
-    await expect(p).resolves.toMatchObject({ output_text: 'direct' });
-    expect(ai.interactions.cancel).toHaveBeenCalledWith('slow');
-    expect(statuses).toContain('in_progress');
-    expect(statuses.at(-1)).toBe('direct');
+    vi.useRealTimers();
   });
 });

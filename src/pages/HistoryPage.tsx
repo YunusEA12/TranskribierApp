@@ -29,26 +29,13 @@ function stepClass(job: Job, step: Step): string {
   return '';
 }
 
-const REMOTE_STATUS: Record<string, string> = {
-  queued: 'in der Warteschlange',
-  in_progress: 'wird bearbeitet',
-  completed: 'fertig',
-};
-
 function TranscribingInfo({ job }: { job: Job }) {
-  if (job.remoteStatus === 'direct') {
-    return <small>Direkte Anfrage an Gemini läuft. Bitte die App geöffnet lassen, bis das Transkript da ist.</small>;
-  }
   return (
     <small>
-      Läuft bei Google weiter. Du kannst die App verlassen und später wiederkommen.
-      {job.remoteStatus && (
-        <>
-          <br />
-          Gemini: {REMOTE_STATUS[job.remoteStatus] ?? job.remoteStatus}
-          {job.lastPollAt && ` · zuletzt geprüft ${new Date(job.lastPollAt).toLocaleTimeString('de-DE')}`}
-        </>
-      )}
+      {job.progressChars
+        ? `Gemini schreibt das Transkript … ${job.progressChars.toLocaleString('de-DE')} Zeichen.`
+        : 'Gemini hört sich die Aufnahme an …'}{' '}
+      Bitte die App geöffnet lassen, bis es fertig ist.
     </small>
   );
 }

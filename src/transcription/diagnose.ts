@@ -3,7 +3,7 @@
 
 import { googleErrorDetail, toUserMessage } from '../lib/errors';
 import type { Settings } from '../settings/settingsStore';
-import { checkModel, createGeminiClient, deleteUpload, geminiCall, listModels, outputText, uploadAudio } from './gemini';
+import { checkModel, createGeminiClient, deleteUpload, listModels, streamText, uploadAudio } from './gemini';
 import { buildTranscriptionPrompt } from './prompt';
 import { TRANSCRIPT_SCHEMA } from './schema';
 
@@ -12,8 +12,6 @@ export interface DiagnosisLine {
   text: string;
 }
 
-const BACKGROUND_WATCH_MS = 90_000;
-const POLL_MS = 3000;
 
 /** 2 s of a 440 Hz tone as 16 kHz mono WAV. */
 export function testToneWav(seconds = 2, rate = 16000): Blob {
@@ -87,32 +85,22 @@ async function runChecks(s: Settings, log: (line: DiagnosisLine) => void): Promi
     return;
   }
 
-  const audio = { type: 'audio' as const, uri: upload.uri, mime_type: upload.mimeType };
   try {
     t = performance.now();
+    let first = 0;
     try {
-      const res = await geminiCall(() =>
-        ai.interactions.create({ model, input: [{ type: 'text', text: 'Was hörst du? Antworte in einem kurzen Satz.' }, audio] }, { timeout: 120_000 }),
-      );
-      const text = outputText(res);
-      log({ ok: Boolean(text), text: `Direkte Anfrage (${secs(t)}): ${text ? snippet(text) : 'leere Antwort'}` });
+      const text = await streamText(ai, model, 'Was hörst du? Antworte in einem kurzen Satz.', upload, {
+        onProgress: () => (first ||= performance.now()),
+      });
+      const firstAfter = first ? ` · erster Text nach ${((first - t) / 1000).toFixed(1).replace('.', ',')} s` : '';
+      log({ ok: Boolean(text), text: `Antwort von Gemini (${secs(t)}${firstAfter}): ${text ? snippet(text) : 'leer'}` });
     } catch (e) {
-      log({ ok: false, text: `Direkte Anfrage (${secs(t)}): ${clean(e)}` });
+      log({ ok: false, text: `Antwort von Gemini (${secs(t)}): ${clean(e)}` });
     }
 
     t = performance.now();
     try {
-      const res = await geminiCall(() =>
-        ai.interactions.create(
-          {
-            model,
-            input: [{ type: 'text', text: buildTranscriptionPrompt({ glossary: [], removeFillers: true }) }, audio],
-            response_format: { type: 'text', mime_type: 'application/json', schema: TRANSCRIPT_SCHEMA },
-          },
-          { timeout: 120_000 },
-        ),
-      );
-      const text = outputText(res);
+      const text = await streamText(ai, model, buildTranscriptionPrompt({ glossary: [], removeFillers: true }), upload, { jsonSchema: TRANSCRIPT_SCHEMA });
       let ok = false;
       try {
         JSON.parse(text);
@@ -123,44 +111,6 @@ async function runChecks(s: Settings, log: (line: DiagnosisLine) => void): Promi
       log({ ok, text: `Transkript-Format (${secs(t)}): ${ok ? 'Antwort ist gültiges JSON' : `kein gültiges JSON: ${snippet(text || 'leer')}`}` });
     } catch (e) {
       log({ ok: false, text: `Transkript-Format (${secs(t)}): ${clean(e)}` });
-    }
-
-    t = performance.now();
-    try {
-      const created = (await geminiCall(() =>
-        ai.interactions.create({ model, input: [{ type: 'text', text: 'Was hörst du? Antworte in einem kurzen Satz.' }, audio], background: true }, { timeout: 60_000 }),
-      )) as { id?: string; status?: string };
-      log({ ok: Boolean(created.id), text: `Hintergrund-Auftrag angenommen (${secs(t)}): Status „${created.status ?? '–'}“${created.id ? '' : ', keine Auftragsnummer'}` });
-      if (created.id) {
-        let last = created.status ?? '';
-        let done = created.status === 'completed';
-        while (!done && performance.now() - t < BACKGROUND_WATCH_MS) {
-          await new Promise((r) => setTimeout(r, POLL_MS));
-          try {
-            const it = (await geminiCall(() => ai.interactions.get(created.id!, undefined, { timeout: 30_000, maxRetries: 0 }))) as { status?: string };
-            if (it.status !== last) {
-              last = it.status ?? '';
-              log({ ok: null, text: `Hintergrund nach ${secs(t)}: Status „${last}“` });
-            }
-            if (it.status === 'completed') {
-              done = true;
-              const text = outputText(it);
-              log({ ok: Boolean(text), text: `Hintergrund fertig (${secs(t)}): ${text ? snippet(text) : 'leere Antwort'}` });
-            } else if (['failed', 'cancelled', 'incomplete', 'budget_exceeded'].includes(it.status ?? '')) {
-              done = true;
-              log({ ok: false, text: `Hintergrund abgebrochen: Status „${it.status}“` });
-            }
-          } catch (e) {
-            log({ ok: false, text: `Nachfragen (${secs(t)}): ${clean(e)}` });
-          }
-        }
-        if (!done) {
-          log({ ok: false, text: `Hintergrund nach ${secs(t)} immer noch „${last}“` });
-          await ai.interactions.cancel(created.id).catch(() => undefined);
-        }
-      }
-    } catch (e) {
-      log({ ok: false, text: `Hintergrund-Auftrag (${secs(t)}): ${clean(e)}` });
     }
   } finally {
     await deleteUpload(ai, upload.name);

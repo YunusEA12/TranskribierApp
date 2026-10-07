@@ -21,12 +21,6 @@ export class FallbackEngine implements TranscriptionEngine {
   }
 
   async transcribe(audio: UploadedAudio, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
-    // A run that already switched to the fallback resumes there.
-    if (context.resume && context.resume.model === this.fallback.model && context.resume.model !== this.primary.model) {
-      const result = await this.fallback.transcribe(audio, options, context);
-      this.model = this.fallback.model;
-      return result;
-    }
     try {
       const result = await this.primary.transcribe(audio, options, context);
       this.model = this.primary.model;

@@ -3,8 +3,8 @@
 import type { GoogleGenAI } from '@google/genai';
 import type { UploadedAudio } from '../jobs/queue';
 import type { TranscriptResult } from '../types';
-import { backgroundWaitMs, type TranscribeContext, type TranscribeOptions, type TranscriptionEngine } from './engine';
-import { outputText, runTranscription } from './gemini';
+import type { TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
+import { streamText } from './gemini';
 import { buildTranscriptionPrompt } from './prompt';
 import { TRANSCRIPT_SCHEMA, TranscriptValidationError, validateTranscriptResult } from './schema';
 
@@ -15,25 +15,10 @@ export class FlashEngine implements TranscriptionEngine {
   ) {}
 
   async transcribe(audio: UploadedAudio, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
-    const res = await runTranscription(
-      this.ai,
-      {
-        model: this.model,
-        input: [
-          { type: 'text', text: buildTranscriptionPrompt(options) },
-          { type: 'audio', uri: audio.uri, mime_type: audio.mimeType },
-        ],
-        response_format: { type: 'text', mime_type: 'application/json', schema: TRANSCRIPT_SCHEMA },
-      },
-      {
-        resumeId: context.resume?.model === this.model ? context.resume.id : undefined,
-        onStarted: (id) => context.onStarted?.(id, this.model) ?? Promise.resolve(),
-        onPoll: context.onPoll,
-        maxWaitMs: backgroundWaitMs(options.durationSec),
-      },
-      this.model,
-    );
-    const text = outputText(res);
+    const text = await streamText(this.ai, this.model, buildTranscriptionPrompt(options), audio, {
+      jsonSchema: TRANSCRIPT_SCHEMA,
+      onProgress: context.onProgress,
+    });
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);

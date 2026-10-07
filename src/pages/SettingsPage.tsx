@@ -72,7 +72,7 @@ function DiagnosisCard() {
         <h2 id="diag-title">Fehlersuche</h2>
       </div>
       <small>
-        Schickt einen 2-Sekunden-Testton an Gemini und prüft jeden Schritt einzeln. Dauert bis zu 2 Minuten; die App dabei geöffnet
+        Schickt einen 2-Sekunden-Testton an Gemini und prüft jeden Schritt einzeln. Dauert meist unter einer Minute; die App dabei geöffnet
         lassen. Das Ergebnis enthält keinen Key.
       </small>
       <button className="btn-ghost" disabled={running || !settings.geminiKey.trim()} onClick={() => void run()}>
