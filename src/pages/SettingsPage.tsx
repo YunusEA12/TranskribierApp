@@ -38,7 +38,6 @@ export function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const updateReady = useUpdateReady();
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'current' | 'unsupported'>('idle');
-  const [otherName, setOtherName] = useState(!PEOPLE.includes(settings.userName) && settings.userName !== '');
 
   // Every change is saved right away; nothing to forget. Only changes the check covers invalidate its result.
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => {
@@ -92,7 +91,7 @@ export function SettingsPage() {
           <h2 id="key-title">Gemini-API-Key</h2>
           {allOk ? <span className="pill ok">geprüft</span> : hasKey ? <span className="pill">eingetragen</span> : <span className="pill warn">fehlt</span>}
         </div>
-        <p className="muted">Das ist das Einzige, was die App braucht. Der Key bleibt auf diesem Gerät.</p>
+        <p className="muted">Zusammen mit „Wer bist du?“ das Einzige, was die App braucht. Der Key bleibt auf diesem Gerät.</p>
         <ol className="step-list">
           <li>
             Key bei Google holen:{' '}
@@ -118,52 +117,37 @@ export function SettingsPage() {
           {testing ? 'Prüfe …' : 'Key prüfen'}
         </button>
         {checks && <Checks checks={checks} onFix={(c) => c.fix && set(c.fix.key, c.fix.value)} />}
-        {allOk && <p className="ok-text">Alles bereit. Unter „Aufnahme“ kannst du loslegen.</p>}
+        {allOk && (
+          <p className="ok-text">
+            {userFolder(settings.userName) ? 'Alles bereit. Unter „Aufnahme“ kannst du loslegen.' : 'Key ok. Jetzt unten noch wählen, wer du bist.'}
+          </p>
+        )}
       </section>
 
       <section className="card stack" aria-labelledby="who-title">
         <div className="row">
           <Icon name="person" />
-          <h2 id="who-title">Wer nimmt auf?</h2>
+          <h2 id="who-title">Wer bist du?</h2>
         </div>
         <div className="chips" role="group" aria-label="Name">
           {PEOPLE.map((p) => (
             <button
               key={p}
               className="chip"
-              aria-pressed={!otherName && settings.userName === p}
+              aria-pressed={settings.userName === p}
               onClick={() => {
-                setOtherName(false);
                 set('userName', p);
+                kickRunner();
               }}
             >
               {p}
             </button>
           ))}
-          <button className="chip" aria-pressed={otherName} onClick={() => setOtherName(true)}>
-            Andere
-          </button>
         </div>
-        {otherName && text('userName', 'Name', { placeholder: 'Dein Name' })}
         <small>
           {userFolder(settings.userName)
-            ? `Deine Notizen landen in Obsidian im eigenen Ordner „Transkripte/${userFolder(settings.userName)}“.`
-            : 'Wähle deinen Namen, dann bekommst du in Obsidian einen eigenen Ordner. Ohne Namen landet alles in „Transkripte“.'}
-        </small>
-      </section>
-
-      <section className="card stack" aria-labelledby="vault-title">
-        <div className="row">
-          <Icon name="vault" />
-          <h2 id="vault-title">Obsidian</h2>
-        </div>
-        {text('obsidianVault', 'Name des Vaults', {
-          placeholder: 'z. B. Notizen',
-          hint: 'Genau so, wie der Vault in Obsidian heißt. Kannst du auch beim ersten Speichern eintragen.',
-        })}
-        <small>
-          Notizen landen im Ordner „Transkripte/{userFolder(settings.userName) || 'Name'}/Jahr“. Obsidian muss auf diesem Gerät installiert
-          sein.
+            ? `Deine Notizen landen im gemeinsamen Vault „${settings.sharedVault}“ im Ordner „Transkripte/${userFolder(settings.userName)}“.`
+            : 'Einmal antippen. Davon hängt ab, in welchem Ordner deine Notizen im gemeinsamen Vault landen.'}
         </small>
       </section>
 
@@ -193,6 +177,12 @@ export function SettingsPage() {
             <input id="setting-removeFillers" type="checkbox" checked={settings.removeFillers} onChange={(e) => set('removeFillers', e.target.checked)} />
             Füllwörter („äh“, „ähm“) entfernen
           </label>
+
+          <span className="eyebrow sub-head">Obsidian</span>
+          {text('sharedVault', 'Name des gemeinsamen Vaults', {
+            placeholder: DEFAULT_SETTINGS.sharedVault,
+            hint: 'Muss auf beiden Handys genau so heißen wie der Vault in Obsidian. Normalerweise nicht ändern.',
+          })}
 
           <span className="eyebrow sub-head">Sicherung auf GitHub (optional)</span>
           <small>Nur nötig, wenn Transkripte zusätzlich in einem GitHub-Repo landen sollen. Sonst leer lassen.</small>

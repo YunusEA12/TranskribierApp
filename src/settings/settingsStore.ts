@@ -2,13 +2,14 @@
 // in requests to Gemini and GitHub.
 
 import { useSyncExternalStore } from 'react';
+import { userFolder } from '../vault/paths';
 
 export type EngineId = 'flash' | 'transcribe';
 
 export interface Settings {
   userName: string;
   geminiKey: string;
-  obsidianVault: string; // vault name as shown in Obsidian
+  sharedVault: string; // name of the Obsidian vault Yunus and Calvin share
   // Optional backup of every transcript into a GitHub repo.
   githubToken: string;
   vaultRepo: string; // "owner/repo"
@@ -25,7 +26,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   userName: '',
   geminiKey: '',
-  obsidianVault: '',
+  sharedVault: 'Mitschrift',
   githubToken: '',
   vaultRepo: '',
   vaultBranch: 'main',
@@ -50,6 +51,7 @@ export function getSettings(): Settings {
     // Corrupt or unavailable storage: fall back to defaults.
   }
   cached = { ...DEFAULT_SETTINGS, ...stored };
+  if (!cached.sharedVault.trim()) cached.sharedVault = DEFAULT_SETTINGS.sharedVault;
   return cached;
 }
 
@@ -70,9 +72,15 @@ export function useSettings(): Settings {
   );
 }
 
-/** What is still missing before a recording can be transcribed. Only the Gemini key is required. */
+export const MISSING_KEY = 'Gemini-API-Key';
+export const MISSING_NAME = 'Wer bist du?';
+
+/** What is still missing before recordings are processed: the key, and who records (decides the vault folder). */
 export function missingSettings(s: Settings): string[] {
-  return s.geminiKey.trim() ? [] : ['Gemini-API-Key'];
+  const missing: string[] = [];
+  if (!s.geminiKey.trim()) missing.push(MISSING_KEY);
+  if (!userFolder(s.userName)) missing.push(MISSING_NAME);
+  return missing;
 }
 
 export function githubBackupEnabled(s: Settings): boolean {

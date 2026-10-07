@@ -225,7 +225,9 @@ label.toggle input { width: 20px; height: 20px; accent-color: var(--vault); }
 .search input { padding-left: 42px; }
 .day { margin: 6px 4px -6px; }
 .cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.tcard { display: grid; gap: 6px; text-decoration: none; color: inherit; }
+.tcard { display: grid; gap: 12px; }
+.tcard > a { display: grid; gap: 6px; text-decoration: none; color: inherit; }
+.tcard > .btn-vault { justify-self: start; }
 .tcard .title { font-weight: 650; font-size: 1.02rem; line-height: 1.3; overflow-wrap: anywhere; }
 .tcard .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tcard .meta .pill { margin-left: auto; }

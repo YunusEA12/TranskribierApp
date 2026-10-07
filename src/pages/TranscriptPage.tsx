@@ -1,87 +1,30 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import { Icon } from '../components/Icon';
-import { db } from '../db/db';
+import { SaveToObsidianButton } from '../components/SaveToObsidianButton';
+import { db, type TranscriptRecord } from '../db/db';
 import { discardJob } from '../jobs/runner';
 import { audioExtension, downloadBlob } from '../lib/download';
-import { toUserMessage } from '../lib/errors';
 import { hrefFor, navigate } from '../router';
-import { saveSettings, useSettings } from '../settings/settingsStore';
+import { useSettings } from '../settings/settingsStore';
 import type { Transcript } from '../types';
 import { parseMarkdown } from '../vault/markdown';
-import { openInObsidian } from '../vault/obsidian';
 
 const speakerClass = (index: number) => `sp-${(index % 5) + 1}`;
 
-function VaultBox({ id, path, markdown, savedAt }: { id: string; path: string; markdown: string; savedAt?: number }) {
+function VaultBox({ record }: { record: TranscriptRecord }) {
   const settings = useSettings();
-  const [vaultName, setVaultName] = useState(settings.obsidianVault);
-  const [editing, setEditing] = useState(!settings.obsidianVault);
-  const [error, setError] = useState('');
-
-  const send = async () => {
-    setError('');
-    try {
-      await openInObsidian(settings.obsidianVault, path, markdown);
-      await db.transcripts.update(id, { obsidianAt: Date.now() });
-    } catch (e) {
-      setError(toUserMessage(e));
-    }
-  };
-
-  if (editing) {
-    return (
-      <div className="card vault-box">
-        <label className="field">
-          In welchen Obsidian-Vault?
-          <input
-            id="obsidian-vault"
-            type="text"
-            autoCapitalize="off"
-            autoComplete="off"
-            placeholder="Name des Vaults, z. B. Notizen"
-            value={vaultName}
-            onChange={(e) => setVaultName(e.target.value)}
-          />
-          <small>Genau so geschrieben, wie der Vault in Obsidian heißt. Wird nur einmal gefragt.</small>
-        </label>
-        <button
-          className="btn-vault"
-          disabled={!vaultName.trim()}
-          onClick={() => {
-            saveSettings({ obsidianVault: vaultName.trim() });
-            setEditing(false);
-          }}
-        >
-          Übernehmen
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="card vault-box">
-      <button className="btn-vault btn-block" onClick={() => void send()}>
-        <Icon name="vault" />
-        {savedAt ? 'Erneut in Obsidian speichern' : 'In Obsidian speichern'}
-      </button>
+      <SaveToObsidianButton record={record} />
       <span className="note">
-        {savedAt
-          ? `An Obsidian übergeben am ${new Date(savedAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}. Erneut speichern überschreibt die Notiz.`
-          : 'Öffnet Obsidian und legt die Notiz an.'}{' '}
-        Vault „{settings.obsidianVault}“ ·{' '}
-        <a
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setEditing(true);
-          }}
-        >
-          ändern
-        </a>
+        {record.obsidianAt
+          ? `An Obsidian übergeben am ${new Date(record.obsidianAt).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}. Erneut speichern überschreibt die Notiz.`
+          : 'Öffnet Obsidian und legt die Notiz an.'}
       </span>
-      <span className="note">Ordner im Vault: {path.slice(0, path.lastIndexOf('/'))}</span>
-      {error && <p className="error-text">{error}</p>}
+      <span className="note">
+        Vault „{settings.sharedVault}“ · Ordner {record.path.slice(0, record.path.lastIndexOf('/'))}
+      </span>
     </div>
   );
 }
@@ -151,7 +94,7 @@ export function TranscriptPage({ id }: { id: string }) {
         </div>
       </div>
 
-      <VaultBox id={id} path={record.path} markdown={record.markdown} savedAt={record.obsidianAt} />
+      <VaultBox record={record} />
 
       <div className="actions">
         <button className="btn-small btn-ghost" onClick={() => void copy()}>

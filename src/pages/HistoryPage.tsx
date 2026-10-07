@@ -1,6 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import { Icon } from '../components/Icon';
+import { SaveToObsidianButton } from '../components/SaveToObsidianButton';
 import { db, type TranscriptRecord } from '../db/db';
 import type { Job, Step } from '../jobs/queue';
 import { discardJob, retryJob } from '../jobs/runner';
@@ -85,22 +86,21 @@ function dayLabel(date: string): string {
 
 function TranscriptCard({ t }: { t: TranscriptRecord }) {
   return (
-    <li>
-      <a className="card tcard" href={hrefFor.transcript(t.id)}>
+    <li className="card tcard">
+      <a href={hrefFor.transcript(t.id)}>
         <span className="title">{t.title}</span>
         <span className="meta">
           <span>{t.time}</span>
           <span>{t.durationMin} min</span>
           <span>{t.speakerCount} Sprecher</span>
-          {t.obsidianAt ? (
+          {t.obsidianAt && (
             <span className="pill vault">
               <Icon name="check" size={13} /> In Obsidian
             </span>
-          ) : (
-            <span className="pill warn">Noch nicht in Obsidian</span>
           )}
         </span>
       </a>
+      {!t.obsidianAt && <SaveToObsidianButton record={t} small />}
     </li>
   );
 }
@@ -111,8 +111,9 @@ export function HistoryPage() {
   const transcripts = useLiveQuery(() => db.transcripts.orderBy('createdAt').reverse().toArray(), []);
   const [query, setQuery] = useState('');
 
-  const waitingReason = missingSettings(settings).length
-    ? 'Wartet auf den API-Key (Einstellungen).'
+  const missing = missingSettings(settings);
+  const waitingReason = missing.length
+    ? `Wartet auf die Einstellungen: ${missing.join(', ')}`
     : !navigator.onLine
       ? 'Offline. Startet automatisch, sobald du wieder online bist.'
       : '';
