@@ -4,12 +4,11 @@ import { db } from '../db/db';
 import { toUserMessage } from '../lib/errors';
 import { formatClock } from '../lib/time';
 import { importAudioFile } from '../recording/importAudio';
-import { interruptedSessions, Recorder, recoverSession, type RecorderState } from '../recording/recorder';
+import { interruptedSessions, recorder, recoverSession, type RecorderState } from '../recording/recorder';
 import { hrefFor, navigate } from '../router';
 import { missingSettings, useSettings } from '../settings/settingsStore';
 import { userFolder } from '../vault/paths';
 
-const recorder = new Recorder(); // module-level: survives page switches during a recording
 const BARS = 40;
 const SPEAKER_OPTIONS = [undefined, 1, 2, 3, 4, 5] as const;
 

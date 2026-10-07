@@ -5,14 +5,24 @@ import { HistoryPage } from './pages/HistoryPage';
 import { RecordPage } from './pages/RecordPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TranscriptPage } from './pages/TranscriptPage';
+import { installUpdate, useUpdateReady } from './pwa/update';
 import { hrefFor, useRoute } from './router';
 
 export function App() {
   const route = useRoute();
   const openJobs = useLiveQuery(() => db.jobs.filter((j) => j.status !== 'done').count(), []);
+  const updateReady = useUpdateReady();
 
   return (
     <>
+      {updateReady && route.page !== 'record' && (
+        <div className="update-bar" role="status">
+          <span>Neue Version der App ist bereit.</span>
+          <button className="btn-small btn-vault" onClick={installUpdate}>
+            Aktualisieren
+          </button>
+        </div>
+      )}
       <main>
         {route.page === 'record' && <RecordPage />}
         {route.page === 'history' && <HistoryPage />}

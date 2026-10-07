@@ -159,6 +159,9 @@ export class Recorder {
   };
 }
 
+/** The app's one recorder; module-level so a recording survives switching pages. */
+export const recorder = new Recorder();
+
 /** Assembles the chunks of a session into one audio job and deletes the chunks, atomically. */
 async function finalizeSession(sessionId: string, opts: { durationSec?: number; speakerCount?: number } = {}): Promise<string> {
   const chunks = await db.chunks.where('[sessionId+seq]').between([sessionId, 0], [sessionId, Infinity]).toArray();

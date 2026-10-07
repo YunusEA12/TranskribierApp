@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Icon } from '../components/Icon';
 import { kickRunner } from '../jobs/runner';
 import { testConnections, type CheckResult } from '../settings/connectionTest';
+import { APP_VERSION, BUILD_TIME, checkForUpdate, installUpdate, useUpdateReady } from '../pwa/update';
 import { DEFAULT_SETTINGS, saveSettings, useSettings, type Settings } from '../settings/settingsStore';
 import { userFolder } from '../vault/paths';
 
@@ -35,6 +36,8 @@ export function SettingsPage() {
   const [checks, setChecks] = useState<CheckResult[] | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
+  const updateReady = useUpdateReady();
+  const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'current' | 'unsupported'>('idle');
   const [otherName, setOtherName] = useState(!PEOPLE.includes(settings.userName) && settings.userName !== '');
 
   // Every change is saved right away; nothing to forget. Only changes the check covers invalidate its result.
@@ -199,6 +202,36 @@ export function SettingsPage() {
           {text('vaultBaseDir', 'Unterordner im Repo', { placeholder: 'leer = oberste Ebene' })}
         </div>
       </details>
+
+      <section className="card stack" aria-labelledby="version-title">
+        <div className="row">
+          <Icon name="retry" />
+          <h2 id="version-title">App-Version</h2>
+          {updateReady && <span className="pill vault">Update bereit</span>}
+        </div>
+        <small>
+          Version {APP_VERSION} vom {new Date(BUILD_TIME).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })}. Updates
+          kommen von selbst; die App muss dafür nicht neu installiert werden.
+        </small>
+        {updateReady ? (
+          <button className="btn-vault" onClick={installUpdate}>
+            Jetzt aktualisieren
+          </button>
+        ) : (
+          <button
+            className="btn-ghost"
+            disabled={updateState === 'checking'}
+            onClick={() => {
+              setUpdateState('checking');
+              void checkForUpdate().then((r) => setUpdateState(r === 'available' ? 'idle' : r));
+            }}
+          >
+            {updateState === 'checking' ? 'Suche …' : 'Nach Update suchen'}
+          </button>
+        )}
+        {updateState === 'current' && !updateReady && <small className="ok-text">Du hast die neueste Version.</small>}
+        {updateState === 'unsupported' && <small>Updates werden geprüft, sobald die App vom Home-Bildschirm aus geöffnet ist.</small>}
+      </section>
 
       <p className="muted" style={{ fontSize: '0.85rem' }}>
         Alles wird nur auf diesem Gerät gespeichert. Auf dem iPhone haben die App vom Home-Bildschirm und Safari getrennten Speicher: hier in

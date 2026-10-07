@@ -108,6 +108,14 @@ main {
   background: var(--rec); color: #fff; font-size: 0.68rem; line-height: 18px; text-align: center;
 }
 
+.update-bar {
+  position: sticky; top: 0; z-index: 9;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+  background: var(--vault-soft); color: var(--fg); font-weight: 550; font-size: 0.92rem;
+}
+.update-bar + main { padding-top: 16px; }
+
 /* ---------- building blocks ---------- */
 .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
 .card.flat { box-shadow: none; border: 1px solid var(--line); }
