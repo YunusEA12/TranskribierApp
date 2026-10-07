@@ -16,6 +16,8 @@ Eine Transkribier-App für Calvin und Yunus: aufnehmen oder Audiodatei importier
 
 Keys und Tokens bleiben nur auf dem Gerät. Nie in Chats, Issues oder ins Repo schreiben.
 
+**Ersatzmodell:** Im kostenlosen Kontingent hat jedes Modell ein Tageslimit. Unter „Einstellungen → Ersatzmodell“ kann ein schwächeres Modell (z. B. ein „flash-lite“) gewählt werden, das einspringt, wenn das Limit des Hauptmodells erreicht ist. Nach „Verbindung testen“ schlägt das Feld die Modelle vor, die der eigene Key nutzen darf.
+
 ## Handy-Test für Phase 1
 
 1. **Einstellungen:** „Verbindung testen“ zeigt zwei grüne Haken.

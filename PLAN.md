@@ -361,7 +361,7 @@ Keine Rechtsberatung, nur die Punkte, die man kennen sollte:
 | # | Frage | Vorschlag | Status |
 |---|---|---|---|
 | 1 | Engine A oder B als Default? | A, nach Test in Phase 0 bestätigen | offen |
-| 2 | Getrennte Vault-Repos oder gemeinsame Organisation? | Getrennt | offen |
+| 2 | Getrennte Vault-Repos oder gemeinsame Organisation? | Getrennt | entschieden: getrennt, jeder mit eigenem Key (2026-10-07) |
 | 3 | Audio dauerhaft aufbewahren? | Nur lokal auf dem Gerät, manuell löschbar | offen |
 | 4 | Füllwörter entfernen als Default? | Ja | offen |
 | 5 | Welche Handys (iPhone/Android)? | Bestimmt, wie wichtig der Import-Weg ist | offen |
@@ -375,6 +375,8 @@ Getroffene Entscheidungen hier mit Datum eintragen.
 | 2026-10-07 | Phase 1 parallel zu den Phase-0-Tests begonnen. Engine A ist vorläufiger Default; Engine B ist eingebaut und holt den Titel mit einem zweiten Request vom Flash-Modell. |
 | 2026-10-07 | `deploy.yml` ersetzt `spike-pages.yml`: App unter der Pages-URL, Spike unter `<pages-url>/spike/`. |
 | 2026-10-07 | 429/5xx: Das Gemini-SDK wiederholt selbst (bis 4 Versuche mit Backoff). Keine eigene Retry-Schleife; schlägt es endgültig fehl, zeigt der Job „Erneut versuchen“. |
+| 2026-10-07 | Ersatzmodell: Ist das Kontingent des Hauptmodells erschöpft (429 nach den SDK-Wiederholungen), transkribiert ein in den Einstellungen gewähltes schwächeres Modell. `model:` im Frontmatter nennt das tatsächlich verwendete Modell. Die Modellliste kommt per API vom eigenen Key, damit keine Namen geraten werden müssen. |
+| 2026-10-07 | Jeder nutzt seinen eigenen Gemini-Key und Token, eingetragen in den Einstellungen der App (nur lokal gespeichert, kein Login). Bestätigt Entscheidung 2 (getrennte Vault-Repos). |
 
 ---
 
