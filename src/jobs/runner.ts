@@ -1,7 +1,7 @@
 // Executes jobs step by step. Runs in the page; a job interrupted by closing the app resumes on the next start.
 
 import { db } from '../db/db';
-import { toUserMessage, UserError } from '../lib/errors';
+import { isNetworkError, toUserMessage, UserError } from '../lib/errors';
 import { getSettings, githubBackupEnabled, missingSettings } from '../settings/settingsStore';
 import { createEngine } from '../transcription/createEngine';
 import { createGeminiClient, deleteUpload, uploadAudio } from '../transcription/gemini';
@@ -122,7 +122,10 @@ async function runJob(id: string): Promise<void> {
       await runStep(step, job, settings, ai);
     } catch (e) {
       console.error(`Job ${id} failed at ${step}`, e);
-      await db.jobs.update(id, stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now()));
+      const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
+      // After a dropped connection the interaction keeps running at Google; anything else needs a fresh start.
+      if (step === 'transcribing' && !isNetworkError(e)) Object.assign(patch, { interactionId: undefined, interactionModel: undefined });
+      await db.jobs.update(id, patch);
       return;
     }
   }
@@ -139,11 +142,14 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
     }
     case 'transcribing': {
       const engine = createEngine(ai, settings);
-      const result = await engine.transcribe(job.upload!, {
-        speakerCount: job.speakerCount,
-        glossary: [],
-        removeFillers: settings.removeFillers,
-      });
+      const result = await engine.transcribe(
+        job.upload!,
+        { speakerCount: job.speakerCount, glossary: [], removeFillers: settings.removeFillers },
+        {
+          resume: job.interactionId && job.interactionModel ? { id: job.interactionId, model: job.interactionModel } : undefined,
+          onStarted: (id, model) => db.jobs.update(job.id, { interactionId: id, interactionModel: model }).then(() => undefined),
+        },
+      );
       await db.jobs.update(job.id, transcriptionDone(result, engine.model, Date.now()));
       return;
     }

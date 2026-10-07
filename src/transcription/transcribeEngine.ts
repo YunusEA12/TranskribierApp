@@ -5,8 +5,8 @@ import type { GoogleGenAI } from '@google/genai';
 import { formatClock } from '../lib/time';
 import type { UploadedAudio } from '../jobs/queue';
 import type { Segment, TranscriptResult } from '../types';
-import type { TranscribeOptions, TranscriptionEngine } from './engine';
-import { geminiCall, outputText, textContents } from './gemini';
+import type { TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
+import { geminiCall, outputText, runInBackground, textContents } from './gemini';
 import { buildTitlePrompt } from './prompt';
 import { validateTranscriptResult } from './schema';
 
@@ -58,16 +58,21 @@ export class TranscribeEngine implements TranscriptionEngine {
   ) {}
 
   // Speaker count and filler removal are not configurable for this model.
-  async transcribe(audio: UploadedAudio, _options: TranscribeOptions): Promise<TranscriptResult> {
+  async transcribe(audio: UploadedAudio, _options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
     // Diarization and custom vocabulary cannot be combined (PLAN.md 3.2); speakers win.
-    const res = await geminiCall(() =>
-      this.ai.interactions.create({
+    const res = await runInBackground(
+      this.ai,
+      {
         model: this.model,
         input: [{ type: 'audio', uri: audio.uri, mime_type: audio.mimeType }],
         generation_config: {
           transcription_config: { mode: { type: 'verbatim', diarization_mode: 'speaker', timestamp_granularities: ['word'] } },
         },
-      }),
+      },
+      {
+        resumeId: context.resume?.model === this.model ? context.resume.id : undefined,
+        onStarted: (id) => context.onStarted?.(id, this.model) ?? Promise.resolve(),
+      },
     );
     const words = textContents(res).flatMap((c) =>
       (c.annotations ?? []).filter((a) => a.type === 'word_info').map((a) => a as WordInfo),

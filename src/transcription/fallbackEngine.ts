@@ -4,7 +4,7 @@
 import type { UploadedAudio } from '../jobs/queue';
 import { HttpError } from '../lib/errors';
 import type { TranscriptResult } from '../types';
-import type { TranscribeOptions, TranscriptionEngine } from './engine';
+import type { TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
 
 export function isQuotaError(e: unknown): boolean {
   return e instanceof HttpError && e.status === 429;
@@ -20,15 +20,21 @@ export class FallbackEngine implements TranscriptionEngine {
     this.model = primary.model;
   }
 
-  async transcribe(audio: UploadedAudio, options: TranscribeOptions): Promise<TranscriptResult> {
+  async transcribe(audio: UploadedAudio, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
+    // A run that already switched to the fallback resumes there.
+    if (context.resume && context.resume.model === this.fallback.model && context.resume.model !== this.primary.model) {
+      const result = await this.fallback.transcribe(audio, options, context);
+      this.model = this.fallback.model;
+      return result;
+    }
     try {
-      const result = await this.primary.transcribe(audio, options);
+      const result = await this.primary.transcribe(audio, options, context);
       this.model = this.primary.model;
       return result;
     } catch (e) {
       if (!isQuotaError(e)) throw e;
       console.warn(`Quota exhausted for ${this.primary.model}, falling back to ${this.fallback.model}`);
-      const result = await this.fallback.transcribe(audio, options);
+      const result = await this.fallback.transcribe(audio, options, context);
       this.model = this.fallback.model;
       return result;
     }

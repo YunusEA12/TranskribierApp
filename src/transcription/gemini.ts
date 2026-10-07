@@ -2,7 +2,7 @@
 // Together with the engines, the only place in the app that talks to Gemini.
 
 import { GoogleGenAI } from '@google/genai';
-import { HttpError } from '../lib/errors';
+import { HttpError, isNetworkError, UserError } from '../lib/errors';
 import type { UploadedAudio } from '../jobs/queue';
 
 export function createGeminiClient(apiKey: string): GoogleGenAI {
@@ -69,6 +69,68 @@ export async function listModels(ai: GoogleGenAI): Promise<string[]> {
     }
     return ids.sort();
   });
+}
+
+// ---------- Background interactions ----------
+// A long transcription can take minutes. iOS suspends a PWA that goes to the background and the
+// browser drops the open request, so the interaction runs at Google in the background and the app
+// only polls. The id is persisted by the caller, so polling resumes after the app was closed.
+
+export class InteractionFailedError extends UserError {}
+
+export interface BackgroundRun {
+  /** Id of an interaction started earlier for the same request; polling resumes there. */
+  resumeId?: string;
+  /** Called once the interaction is accepted, so the caller can persist its id. */
+  onStarted?: (id: string) => Promise<void>;
+}
+
+const POLL_FIRST_MS = 3000;
+const POLL_MAX_MS = 15000;
+const MAX_POLL_NETWORK_ERRORS = 8;
+const MAX_WAIT_MS = 2 * 60 * 60 * 1000;
+const POLL_TIMEOUT_MS = 30000;
+
+type CreateParams = Parameters<GoogleGenAI['interactions']['create']>[0];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export async function runInBackground(ai: GoogleGenAI, params: CreateParams, run: BackgroundRun = {}): Promise<unknown> {
+  let id = run.resumeId;
+  if (!id) {
+    const created = (await geminiCall(() => ai.interactions.create({ ...params, background: true } as CreateParams))) as { id?: string; status?: string };
+    if (created.status === 'completed') return created;
+    if (!created.id) throw new InteractionFailedError('Gemini hat keine Auftragsnummer zurückgegeben.');
+    id = created.id;
+    await run.onStarted?.(id);
+  }
+
+  const started = Date.now();
+  let delay = POLL_FIRST_MS;
+  let networkErrors = 0;
+  while (Date.now() - started < MAX_WAIT_MS) {
+    await sleep(delay);
+    delay = Math.min(POLL_MAX_MS, Math.round(delay * 1.4));
+    let interaction: { status?: string };
+    try {
+      interaction = (await geminiCall(() => ai.interactions.get(id, undefined, { timeout: POLL_TIMEOUT_MS, maxRetries: 0 }))) as { status?: string };
+      networkErrors = 0;
+    } catch (e) {
+      // A poll that died with the app in the background is harmless; ask again.
+      if (isNetworkError(e) && ++networkErrors < MAX_POLL_NETWORK_ERRORS) continue;
+      throw e;
+    }
+    switch (interaction.status) {
+      case 'completed':
+        return interaction;
+      case 'failed':
+      case 'cancelled':
+      case 'incomplete':
+      case 'budget_exceeded':
+        throw new InteractionFailedError(`Gemini hat die Transkription abgebrochen (Status: ${interaction.status}).`);
+    }
+  }
+  throw new InteractionFailedError('Gemini braucht ungewöhnlich lange. Bitte später erneut versuchen.');
 }
 
 // ---------- Interactions responses ----------

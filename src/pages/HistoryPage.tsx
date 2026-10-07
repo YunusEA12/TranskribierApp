@@ -42,6 +42,8 @@ function JobCard({ job, waitingReason }: { job: Job; waitingReason: string }) {
         ))}
       </div>
       {job.status === 'recorded' && <small>{waitingReason || 'Startet gleich …'}</small>}
+      {job.status === 'uploading' && <small>Bitte die App geöffnet lassen, bis das Hochladen fertig ist.</small>}
+      {job.status === 'transcribing' && <small>Läuft bei Google weiter. Du kannst die App verlassen und später wiederkommen.</small>}
       {job.status === 'failed' && (
         <>
           <p className="error-text">{job.error}</p>

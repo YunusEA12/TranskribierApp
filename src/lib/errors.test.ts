@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HttpError, googleErrorDetail, toUserMessage } from './errors';
+import { HttpError, googleErrorDetail, isNetworkError, toUserMessage } from './errors';
 
 const googleBody = (message: string, status: string) =>
   `got status: 400 Bad Request. {"error":{"code":400,"message":"${message}","status":"${status}"}}`;
@@ -21,7 +21,13 @@ describe('toUserMessage', () => {
   });
 
   it('recognizes network errors', () => {
-    expect(toUserMessage(new TypeError('Failed to fetch'))).toMatch(/Internetverbindung/);
+    expect(toUserMessage(new TypeError('Failed to fetch'))).toMatch(/Verbindung ist abgerissen/);
+  });
+
+  it('recognizes Safari dropping a request of a suspended app, as wrapped by the SDK', () => {
+    const e = new Error('Unexpected HTTP client error: TypeError: Load failed');
+    expect(isNetworkError(e)).toBe(true);
+    expect(toUserMessage(e, 'gemini')).toMatch(/Erneut versuchen/);
   });
 });
 

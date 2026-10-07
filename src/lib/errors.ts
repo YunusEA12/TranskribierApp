@@ -25,13 +25,20 @@ export function googleErrorDetail(e: unknown): string {
   return /"message":\s*"((?:[^"\\]|\\.)*)"/.exec(raw)?.[1] ?? raw;
 }
 
-function isNetworkError(e: unknown): boolean {
-  return e instanceof TypeError && /fetch|network|load failed/i.test(e.message);
+/**
+ * The connection broke (offline, or iOS suspended the app mid-request). The SDK wraps the browser's
+ * TypeError ("Load failed" in Safari, "Failed to fetch" in Chrome), so look at the message too.
+ */
+export function isNetworkError(e: unknown): boolean {
+  const message = e instanceof Error ? `${e.message} ${String((e as { cause?: unknown }).cause ?? '')}` : String(e);
+  return /load failed|failed to fetch|networkerror|network connection was lost|internet connection appears to be offline|unexpected http client error/i.test(message);
 }
 
 export function toUserMessage(e: unknown, service?: 'github' | 'gemini'): string {
   if (e instanceof UserError) return e.message;
-  if (isNetworkError(e)) return 'Keine Verbindung zum Server. Bitte Internetverbindung prüfen.';
+  if (isNetworkError(e)) {
+    return 'Die Verbindung ist abgerissen, vermutlich weil die App im Hintergrund war oder das Netz weg war. „Erneut versuchen“ macht dort weiter.';
+  }
   const svc = e instanceof HttpError ? e.service : service;
   const status = statusOf(e);
 
