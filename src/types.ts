@@ -19,6 +19,7 @@ export interface TranscriptResult {
 export interface TranscriptMeta {
   id: string;
   title: string;
+  aliases: string[]; // lets Obsidian find and link the note by its title alone
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
   durationMin: number;

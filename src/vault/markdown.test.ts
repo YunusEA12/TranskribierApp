@@ -6,6 +6,7 @@ const sample: Transcript = {
   meta: {
     id: '2026-10-07T08-41-12',
     title: 'Projektplanung Transkript-App',
+    aliases: ['Projektplanung Transkript-App'],
     date: '2026-10-07',
     time: '08:41',
     durationMin: 42,
@@ -27,6 +28,7 @@ describe('toMarkdown', () => {
     expect(toMarkdown(sample)).toBe(`---
 id: 2026-10-07T08-41-12
 title: "Projektplanung Transkript-App"
+aliases: ["Projektplanung Transkript-App"]
 date: 2026-10-07
 time: "08:41"
 duration_min: 42
@@ -70,7 +72,7 @@ describe('parseMarkdown', () => {
 
   it('round-trips tricky values', () => {
     const t: Transcript = {
-      meta: { ...sample.meta, title: 'Über "Öl" & mehr: #1', speakers: { S1: 'Dr. Müller: Chef', S2: "O'Neil" }, source: 'import' },
+      meta: { ...sample.meta, title: 'Über "Öl" & mehr: #1', aliases: ['Über "Öl", [mehr]: #1'], speakers: { S1: 'Dr. Müller: Chef', S2: "O'Neil" }, source: 'import' },
       segments: [
         { speaker: 'S1', start: '01:02:03', text: 'Hallo **fett** und [unverständlich].' },
         { speaker: 'S2', start: '01:02:10', text: 'Ja: genau.' },
@@ -86,6 +88,11 @@ describe('parseMarkdown', () => {
     const t = parseMarkdown(md);
     expect(t.meta.source).toBe('recording');
     expect(t.segments[1]!.text).toBe('Text des zweiten Abschnitts …\nmanuell ergänzt');
+  });
+
+  it('reads notes written before aliases existed', () => {
+    const md = toMarkdown(sample).replace('aliases: ["Projektplanung Transkript-App"]\n', '');
+    expect(parseMarkdown(md).meta.aliases).toEqual([]);
   });
 
   it('keeps unknown speaker names as ids', () => {
@@ -107,6 +114,7 @@ describe('createTranscript', () => {
     expect(t.meta).toEqual({
       id: '2026-10-07T08-41-12',
       title: 'Test',
+      aliases: ['Test'],
       date: '2026-10-07',
       time: '08:41',
       durationMin: 42,

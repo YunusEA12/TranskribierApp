@@ -25,6 +25,7 @@ export function createTranscript(result: TranscriptResult, ctx: TranscriptContex
     meta: {
       id: transcriptId(ctx.recordedAt),
       title: result.title,
+      aliases: [result.title],
       date: localDate(ctx.recordedAt),
       time: localTime(ctx.recordedAt),
       durationMin: Math.round(ctx.durationSec / 60),
@@ -58,6 +59,7 @@ export function toMarkdown(t: Transcript): string {
     '---',
     `id: ${m.id}`,
     `title: ${JSON.stringify(m.title)}`,
+    `aliases: [${m.aliases.map((a) => JSON.stringify(a)).join(', ')}]`,
     `date: ${m.date}`,
     `time: "${m.time}"`,
     `duration_min: ${m.durationMin}`,
@@ -92,14 +94,14 @@ function parseScalar(raw: string): string {
   return v.replace(/\s+#.*$/, '');
 }
 
+// Items of a YAML flow list: quoted strings may contain commas and brackets.
+const LIST_ITEM_RE = /"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^,\s][^,]*/g;
+
 function parseList(raw: string): string[] {
   const v = raw.trim();
   if (!v.startsWith('[')) return v ? [parseScalar(v)] : [];
-  return v
-    .slice(1, v.lastIndexOf(']'))
-    .split(',')
-    .map((s) => parseScalar(s))
-    .filter(Boolean);
+  const inner = v.slice(1, v.lastIndexOf(']'));
+  return (inner.match(LIST_ITEM_RE) ?? []).map((s) => parseScalar(s)).filter(Boolean);
 }
 
 const SEGMENT_RE = /^\*\*\[(\d{1,2}:\d{2}(?::\d{2})?)\] (.+?):\*\*\s?(.*)$/;
@@ -131,6 +133,7 @@ export function parseMarkdown(text: string): Transcript {
   const meta: TranscriptMeta = {
     id: parseScalar(fields.id ?? ''),
     title: parseScalar(fields.title ?? ''),
+    aliases: parseList(fields.aliases ?? ''),
     date: parseScalar(fields.date ?? ''),
     time: parseScalar(fields.time ?? ''),
     durationMin: Number(parseScalar(fields.duration_min ?? '0')) || 0,
