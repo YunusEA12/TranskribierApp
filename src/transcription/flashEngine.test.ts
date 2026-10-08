@@ -103,6 +103,37 @@ describe('FlashEngine', () => {
     expect(prompts[1]).toContain('from 02:00 to the end');
   });
 
+  it('waits out a per-minute quota as long as Google asks, then goes on', async () => {
+    vi.useFakeTimers();
+    try {
+      const minuteQuota = JSON.stringify({ error: { code: 429, details: [{ violations: [{ quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier' }] }, { retryDelay: '20s' }] } });
+      let calls = 0;
+      const generateContentStream = vi.fn(async () => {
+        if (++calls === 1) throw Object.assign(new Error(minuteQuota), { status: 429 });
+        return (async function* () {
+          yield { text: firstPart };
+        })();
+      });
+      const ai = { models: { generateContentStream } } as unknown as GoogleGenAI;
+      const waits: Array<number | undefined> = [];
+      const pending = new FlashEngine(ai, 'm').transcribe(audio, options, { onWait: (until) => void waits.push(until) });
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(generateContentStream).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect((await pending).segments).toHaveLength(3);
+      expect(waits).toHaveLength(2);
+      expect(waits[1]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not wait for a used-up daily quota', async () => {
+    const dailyQuota = JSON.stringify({ error: { code: 429, details: [{ violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }] } });
+    const ai = { models: { generateContentStream: vi.fn(async () => { throw Object.assign(new Error(dailyQuota), { status: 429 }); }) } } as unknown as GoogleGenAI;
+    await expect(new FlashEngine(ai, 'm').transcribe(audio, options)).rejects.toMatchObject({ status: 429 });
+  });
+
   it('gives up after three breaks without progress, saying that a retry continues', async () => {
     const { ai } = fakeAi([
       { chunks: ['{"title":"x"'], breaks: true },

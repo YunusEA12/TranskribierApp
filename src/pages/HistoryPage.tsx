@@ -63,6 +63,12 @@ function TranscribingInfo({ job }: { job: Job }) {
           <span style={{ width: `${(position / job.durationSec) * 100}%` }} />
         </div>
       )}
+      {job.waitUntil && (
+        <small>
+          Google erlaubt mit dem kostenlosen Key nur eine begrenzte Menge pro Minute. Es geht um{' '}
+          {new Date(job.waitUntil).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} Uhr von selbst weiter.
+        </small>
+      )}
       <small>
         {until && `Bis ${until} ist es schon transkribiert, Gemini macht dort weiter. `}
         {position !== undefined

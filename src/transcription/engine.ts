@@ -14,6 +14,8 @@ export interface TranscribeContext {
   onPartial?: (partial: TranscriptResult) => Promise<void> | void;
   /** Waits before the engine retries on its own after a break (e.g. until the app is open again). */
   beforeRetry?: () => Promise<void>;
+  /** The engine waits for Google's per-minute quota until this time (undefined: waiting is over). */
+  onWait?: (until: number | undefined) => Promise<void> | void;
 }
 
 export interface TranscribeOptions {

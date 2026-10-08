@@ -38,6 +38,8 @@ export interface Job {
   progressChars?: number;
   /** How far into the recording the transcript has got, in seconds (progress display while transcribing). */
   progressSec?: number;
+  /** Waiting for Google's per-minute quota until this time; then it goes on by itself. */
+  waitUntil?: number;
   /** Transcribed so far when an answer broke off; transcription continues from here. */
   partialResult?: TranscriptResult;
   result?: TranscriptResult;
@@ -100,7 +102,7 @@ export function uploadDone(upload: UploadedAudio, now: number): Partial<Job> {
 }
 
 export function transcriptionDone(result: TranscriptResult, model: string, now: number): Partial<Job> {
-  return { status: 'saving', stepStartedAt: now, result, model, progressChars: undefined, progressSec: undefined, partialResult: undefined, updatedAt: now };
+  return { status: 'saving', stepStartedAt: now, result, model, progressChars: undefined, progressSec: undefined, waitUntil: undefined, partialResult: undefined, updatedAt: now };
 }
 
 export function savingDone(vaultPath: string, now: number): Partial<Job> {

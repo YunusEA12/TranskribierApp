@@ -26,6 +26,14 @@ export function suggestFlashModel(models: string[], lite = false): string | unde
   return pool.sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1);
 }
 
+/** A second model for when the main one's free daily quota is used up: each model has its own quota. */
+export function suggestFallbackModel(models: string[], main: string): string | undefined {
+  const lite = suggestFlashModel(models, true);
+  if (lite && lite !== main) return lite;
+  const other = suggestFlashModel(models.filter((m) => m !== main));
+  return other !== main ? other : undefined;
+}
+
 export async function testGemini(s: Settings): Promise<GeminiReport> {
   const checks: CheckResult[] = [];
   let models: string[] = [];
@@ -67,6 +75,17 @@ export async function testGemini(s: Settings): Promise<GeminiReport> {
         ok: false,
         message: notFound ? `gibt es nicht (mehr).${suggestion ? ` Vorschlag: ${suggestion}.` : ''}` : toUserMessage(e, 'gemini'),
         fix: notFound && suggestion ? { key, value: suggestion } : undefined,
+      });
+    }
+  }
+  if (!s.fallbackModel.trim()) {
+    const suggestion = suggestFallbackModel(models, s.flashModel.trim());
+    if (suggestion) {
+      checks.push({
+        label: 'Ersatzmodell',
+        ok: true,
+        message: `noch keins eingetragen. Vorschlag: ${suggestion}. Es hat ein eigenes Tageslimit und springt ein, wenn das Hauptmodell aufgebraucht ist.`,
+        fix: { key: 'fallbackModel', value: suggestion },
       });
     }
   }

@@ -1,5 +1,7 @@
 // Errors shown to the user are short German sentences. Everything else is mapped here.
 
+import { dailyQuotaReset, quotaInfo } from './quota';
+
 /** An error whose message is already meant for the user. */
 export class UserError extends Error {}
 
@@ -32,6 +34,21 @@ export function googleErrorDetail(e: unknown): string {
 export function isNetworkError(e: unknown): boolean {
   const message = e instanceof Error ? `${e.message} ${String((e as { cause?: unknown }).cause ?? '')}` : String(e);
   return /load failed|failed to fetch|networkerror|network connection was lost|internet connection appears to be offline|unexpected http client error|timed out|timeouterror|incomplete json segment/i.test(message);
+}
+
+/** What to do about an exhausted Gemini quota: daily ones need a different model or tomorrow morning. */
+function quotaMessage(e: unknown): string {
+  const info = quotaInfo(e);
+  if (info.daily) {
+    const now = new Date();
+    const reset = dailyQuotaReset(now);
+    const day = reset.toDateString() === now.toDateString() ? 'heute' : 'morgen';
+    const time = reset.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    const model = info.model ? ` für „${info.model}“` : '';
+    const limit = info.limit ? ` (${info.limit} Anfragen pro Tag)` : '';
+    return `Das kostenlose Tageslimit von Gemini${model} ist aufgebraucht${limit}. Es gilt wieder ab ${day} ${time} Uhr. Sofort weiter geht es mit einem Ersatzmodell: Einstellungen → „Key prüfen“ → beim Ersatzmodell „Übernehmen“, dann „Erneut versuchen“.`;
+  }
+  return `Gemini meldet zu viele Anfragen auf einmal (${googleErrorDetail(e).slice(0, 100)}). Bitte in ein paar Minuten „Erneut versuchen“.`;
 }
 
 export function toUserMessage(e: unknown, service?: 'github' | 'gemini'): string {
@@ -69,7 +86,7 @@ export function toUserMessage(e: unknown, service?: 'github' | 'gemini'): string
       case 404:
         return 'Das Gemini-Modell wurde nicht gefunden. Bitte Modell-ID in den Einstellungen prüfen.';
       case 429:
-        return 'Gemini-Kontingent erschöpft. Später erneut versuchen.';
+        return quotaMessage(e);
     }
   }
   if (status !== undefined && status >= 500) {

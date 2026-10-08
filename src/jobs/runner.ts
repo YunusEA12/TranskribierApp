@@ -189,7 +189,7 @@ async function runJob(id: string): Promise<void> {
       } catch (e) {
         console.warn(`Job failed at ${step}; audio retained.`);
         const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
-        if (step === 'transcribing') Object.assign(patch, { progressChars: undefined, progressSec: undefined });
+        if (step === 'transcribing') Object.assign(patch, { progressChars: undefined, progressSec: undefined, waitUntil: undefined });
         await db.jobs.update(id, patch);
         return;
       }
@@ -241,6 +241,9 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
             if (!operationSignal.aborted) await db.jobs.update(job.id, { partialResult: partial, progressChars: undefined });
           },
           beforeRetry: () => untilForeground(operationSignal),
+          onWait: async (until) => {
+            if (!operationSignal.aborted) await db.jobs.update(job.id, { waitUntil: until });
+          },
         },
       ), 20 * 60 * 1000, 'Die Transkription dauert zu lange. Die Aufnahme bleibt gespeichert. Bitte erneut versuchen.', signal);
       await db.jobs.update(job.id, transcriptionDone(result, engine.model, Date.now()));

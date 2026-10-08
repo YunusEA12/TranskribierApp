@@ -3,7 +3,9 @@
 // is asked for separately, starting where the kept part ends (PLAN.md 3.5).
 
 import type { GoogleGenAI } from '@google/genai';
-import { UserError } from '../lib/errors';
+import { HttpError, UserError } from '../lib/errors';
+import { quotaInfo } from '../lib/quota';
+import { sleep } from '../lib/request';
 import { formatClock } from '../lib/time';
 import type { TranscriptResult } from '../types';
 import type { AudioInput, TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
@@ -16,7 +18,14 @@ import { TRANSCRIPT_SCHEMA, validateTranscriptResult } from './schema';
 const MAX_BREAKS_WITHOUT_PROGRESS = 3;
 /** Upper bound for requests per transcription, whatever happens. */
 const MAX_REQUESTS = 20;
+/** A per-minute quota is waited out (as long as Google asks, at most two minutes), a few times. */
+const MAX_QUOTA_WAITS = 3;
+const MAX_QUOTA_WAIT_SEC = 120;
 const STUCK_MESSAGE = 'Gemini ist beim Transkribieren hängen geblieben und hat sich ständig wiederholt. „Erneut versuchen“ macht ab der letzten guten Stelle weiter.';
+
+function isMinuteQuota(e: unknown): boolean {
+  return e instanceof HttpError && e.status === 429 && !quotaInfo(e).daily;
+}
 
 function parseJson(text: string): unknown {
   try {
@@ -43,6 +52,7 @@ export class FlashEngine implements TranscriptionEngine {
   async transcribe(audio: AudioInput, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
     let partial = context.resumeFrom;
     let breaks = 0;
+    let quotaWaits = 0;
     for (let request = 1; ; request++) {
       const plan = partial ? resumePlan(partial) : null;
       const prompt = plan ? buildContinuationPrompt(options, plan.kept, formatClock(plan.resumeAtSec)) : buildTranscriptionPrompt(options);
@@ -57,6 +67,14 @@ export class FlashEngine implements TranscriptionEngine {
           stopWhen: (sofar) => (looksStuck(sofar) ? STUCK_MESSAGE : undefined),
         });
       } catch (e) {
+        if (isMinuteQuota(e) && quotaWaits < MAX_QUOTA_WAITS) {
+          quotaWaits++;
+          const waitMs = Math.min(MAX_QUOTA_WAIT_SEC, (quotaInfo(e).retryAfterSec ?? 60) + 1) * 1000;
+          await context.onWait?.(Date.now() + waitMs);
+          await sleep(waitMs, context.signal);
+          await context.onWait?.(undefined);
+          continue;
+        }
         if (!(e instanceof StreamCutError)) throw e;
         cut = e;
         text = e.partial;

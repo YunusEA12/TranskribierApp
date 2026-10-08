@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HttpError, googleErrorDetail, isNetworkError, toUserMessage } from './errors';
 
 const googleBody = (message: string, status: string) =>
@@ -20,6 +20,20 @@ describe('toUserMessage', () => {
     expect(toUserMessage(e)).toBe(
       'Gemini hat einen Fehler auf Googles Seite gemeldet (503: The model is overloaded. Please try again later.). Die Aufnahme bleibt gespeichert. Bitte in ein paar Minuten „Erneut versuchen“.',
     );
+  });
+
+  it('says when a used-up daily quota is back, and how to go on now', () => {
+    vi.useFakeTimers({ now: new Date('2026-10-08T08:44:00Z') });
+    try {
+      const body = JSON.stringify({ error: { code: 429, details: [{ violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', quotaDimensions: { model: 'gemini-x' }, quotaValue: '20' }] }] } });
+      const message = toUserMessage(new HttpError('gemini', 429, body));
+      const reset = new Date('2026-10-09T07:00:00Z').toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      expect(message).toContain('Tageslimit von Gemini für „gemini-x“ ist aufgebraucht (20 Anfragen pro Tag)');
+      expect(message).toContain(`ab morgen ${reset} Uhr`);
+      expect(message).toContain('Ersatzmodell');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('maps GitHub statuses', () => {
