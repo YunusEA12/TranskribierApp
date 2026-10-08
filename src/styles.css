@@ -260,6 +260,9 @@ label.toggle input { width: 20px; height: 20px; accent-color: var(--vault); }
 .steps div.fail::before { background: var(--rec); }
 .steps div.fail { color: var(--rec); font-weight: 600; }
 @keyframes progress { from { background-position: 100% 0; } to { background-position: 0 0; } }
+/* How far into the recording the transcript has got. */
+.progress { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.progress span { display: block; height: 100%; border-radius: 3px; background: var(--vault); transition: width 0.6s ease; }
 .step-timer { font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -4px; }
 .job.failed { outline: 1.5px solid color-mix(in srgb, var(--rec) 45%, transparent); }
 

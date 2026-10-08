@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscriptResult } from '../types';
-import { joinTranscripts, parseTruncatedJson, resumePlan, salvageTranscript } from './resume';
+import { joinTranscripts, latestStartSec, looksStuck, parseTruncatedJson, resumePlan, salvageTranscript } from './resume';
 
 const full = {
   title: 'Besprechung',
@@ -104,5 +104,27 @@ describe('joinTranscripts', () => {
   it('takes the title from the continuation if the first part had none', () => {
     const after: TranscriptResult = { title: 'Später', language: 'de', speakers: ['S1'], segments: [{ speaker: 'S1', start: '00:09', text: 'x' }] };
     expect(joinTranscripts({ ...before, title: '' }, after, 9).title).toBe('Später');
+  });
+});
+
+describe('latestStartSec', () => {
+  it('finds the start of the newest segment while the answer is still arriving', () => {
+    expect(latestStartSec(json.slice(0, json.indexOf('Gut.')))).toBe(9);
+    expect(latestStartSec('{"segments":[{"speaker":"S1","start":"01:02:03","te')).toBe(3723);
+  });
+
+  it('ignores quoted words inside the text and answers without segments', () => {
+    expect(latestStartSec('{"title":"x"')).toBeUndefined();
+    expect(latestStartSec('{"segments":[{"speaker":"S1","start":"00:05","text":"er sagte \\"start\\": \\"09:99\\"')).toBe(5);
+  });
+});
+
+describe('looksStuck', () => {
+  it('accepts normal segments', () => {
+    expect(looksStuck(json)).toBe(false);
+  });
+
+  it('flags a segment that runs on far longer than a minute of speech', () => {
+    expect(looksStuck(`{"segments":[{"speaker":"S1","start":"00:00","text":"${'ja ja '.repeat(2000)}`)).toBe(true);
   });
 });

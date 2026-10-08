@@ -6,8 +6,8 @@ export type AudioInput = { uri: string; mimeType: string } | { data: string; mim
 export interface TranscribeContext {
   signal?: AbortSignal;
   firstChunkMs?: number;
-  /** Number of characters Gemini has sent so far, for a progress display. */
-  onProgress?: (chars: number) => void;
+  /** Characters Gemini has sent so far and, if known, how far into the recording it is (seconds). */
+  onProgress?: (chars: number, positionSec?: number) => void;
   /** What an earlier, interrupted attempt already transcribed; the engine continues after it. */
   resumeFrom?: TranscriptResult;
   /** Everything transcribed so far, whenever an answer broke off; stored so a later retry can continue. */

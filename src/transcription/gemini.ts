@@ -101,8 +101,10 @@ const NEXT_CHUNK_MS = 2 * 60 * 1000;
 export interface StreamOptions {
   /** JSON schema the answer must follow. */
   jsonSchema?: unknown;
-  /** Called with the number of characters received so far. */
-  onProgress?: (chars: number) => void;
+  /** Called with the number of characters received so far, and the text itself. */
+  onProgress?: (chars: number, text: string) => void;
+  /** Checked after every piece of text; returning a message ends the answer as broken off (StreamCutError). */
+  stopWhen?: (text: string) => string | undefined;
   signal?: AbortSignal;
   firstChunkMs?: number;
 }
@@ -123,8 +125,11 @@ function isThinkingUnsupported(e: unknown): boolean {
  * instead of starting over.
  */
 export class StreamCutError extends UserError {
-  constructor(readonly partial: string) {
-    super('Die Verbindung zu Gemini ist abgerissen, vermutlich weil die App im Hintergrund war oder das Netz weg war. „Erneut versuchen“ macht dort weiter, wo es abgebrochen ist.');
+  constructor(
+    readonly partial: string,
+    message = 'Die Verbindung zu Gemini ist abgerissen, vermutlich weil die App im Hintergrund war oder das Netz weg war. „Erneut versuchen“ macht dort weiter, wo es abgebrochen ist.',
+  ) {
+    super(message);
   }
 }
 
@@ -133,18 +138,22 @@ function isStreamBreak(e: unknown): boolean {
   return isNetworkError(e) || e instanceof SyntaxError || /incomplete json segment|exception parsing stream chunk/i.test(message);
 }
 
-/** Text answer for a prompt plus an uploaded audio file. Low thinking: a verbatim transcript needs no reasoning. */
+// A verbatim transcript needs no reasoning, and thinking delays the first word: ask for as little as the
+// model allows. Models that reject a level get the next one, and finally no setting at all.
+const THINKING_LEVELS: Array<ThinkingLevel | undefined> = [ThinkingLevel.MINIMAL, ThinkingLevel.LOW, undefined];
+
+/** Text answer for a prompt plus an uploaded audio file. */
 export async function streamText(ai: GoogleGenAI, model: string, prompt: string, audio: AudioInput, options: StreamOptions = {}): Promise<string> {
   const audioPart = 'data' in audio ? { inlineData: { data: audio.data, mimeType: audio.mimeType } } : { fileData: { fileUri: audio.uri, mimeType: audio.mimeType } };
   const timeout = options.firstChunkMs ?? FIRST_CHUNK_MS;
   const stalledMessage = 'Gemini antwortet nicht. Bitte „Erneut versuchen“, mit geöffneter App.';
-  const config = (withThinking: boolean, signal: AbortSignal) => ({
+  const config = (thinkingLevel: ThinkingLevel | undefined, signal: AbortSignal) => ({
     abortSignal: signal,
     ...(options.jsonSchema ? { responseMimeType: 'application/json', responseJsonSchema: options.jsonSchema } : {}),
-    ...(withThinking ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
+    ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
   });
   const contents = [{ role: 'user', parts: [{ text: prompt }, audioPart] }];
-  const run = async (withThinking: boolean): Promise<string> => {
+  const run = async (thinkingLevel: ThinkingLevel | undefined): Promise<string> => {
     const controller = new AbortController();
     const cancel = () => controller.abort();
     options.signal?.addEventListener('abort', cancel, { once: true });
@@ -153,7 +162,7 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
     const began = lastTextAt;
     try {
       const stream = await boundedRequest(
-        () => geminiCall(() => ai.models.generateContentStream({ model, contents, config: config(withThinking, controller.signal) })),
+        () => geminiCall(() => ai.models.generateContentStream({ model, contents, config: config(thinkingLevel, controller.signal) })),
         timeout, stalledMessage, options.signal,
       );
       const iterator = stream[Symbol.asyncIterator]();
@@ -165,7 +174,9 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
         if (piece) {
           lastTextAt = Date.now();
           text += piece;
-          options.onProgress?.(text.length);
+          options.onProgress?.(text.length, text);
+          const stop = options.stopWhen?.(text);
+          if (stop) throw new StreamCutError(text, stop);
         }
         const reason = next.value.candidates?.[0]?.finishReason;
         // Output limit reached: the text so far is good, the caller asks for the rest.
@@ -185,7 +196,7 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
         let response;
         try {
           response = await boundedRequest(
-            (signal) => geminiCall(() => ai.models.generateContent({ model, contents, config: config(withThinking, signal) })),
+            (signal) => geminiCall(() => ai.models.generateContent({ model, contents, config: config(thinkingLevel, signal) })),
             timeout, stalledMessage, options.signal,
           );
         } catch (e2) {
@@ -196,7 +207,7 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
         if (reason === 'MAX_TOKENS') throw new StreamCutError(response.text ?? '');
         if (reason && reason !== 'STOP') throw new UserError(`Gemini hat die Antwort abgebrochen (${reason}). Bitte eine kürzere Aufnahme versuchen.`);
         if (!response.text) throw new UserError('Gemini hat keinen Text geliefert. Bitte Modell und Aufnahme prüfen.');
-        options.onProgress?.(response.text.length);
+        options.onProgress?.(response.text.length, response.text);
         return response.text;
       }
       // Broke off midway (also a server error after text came): hand over what arrived.
@@ -209,14 +220,16 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
       options.signal?.removeEventListener('abort', cancel);
     }
   };
-  try {
-    return await run(true);
-  } catch (e) {
-    if (isThinkingUnsupported(e)) return run(false);
-    if (isAudioUnsupported(e)) {
-      throw new UserError(`Das Modell „${model}“ kann keine Audiodateien verarbeiten. In den Einstellungen auf „Key prüfen“ tippen.`);
+  for (let i = 0; ; i++) {
+    try {
+      return await run(THINKING_LEVELS[i]);
+    } catch (e) {
+      if (isThinkingUnsupported(e) && i < THINKING_LEVELS.length - 1) continue;
+      if (isAudioUnsupported(e)) {
+        throw new UserError(`Das Modell „${model}“ kann keine Audiodateien verarbeiten. In den Einstellungen auf „Key prüfen“ tippen.`);
+      }
+      throw e;
     }
-    throw e;
   }
 }
 

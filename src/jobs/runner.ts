@@ -189,7 +189,7 @@ async function runJob(id: string): Promise<void> {
       } catch (e) {
         console.warn(`Job failed at ${step}; audio retained.`);
         const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
-        if (step === 'transcribing') patch.progressChars = undefined;
+        if (step === 'transcribing') Object.assign(patch, { progressChars: undefined, progressSec: undefined });
         await db.jobs.update(id, patch);
         return;
       }
@@ -230,10 +230,10 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
           signal: operationSignal,
           firstChunkMs: Math.min(300000, Math.max(90000, job.durationSec * 1000)),
           // Progress for the job card, written at most once a second.
-          onProgress: (chars) => {
+          onProgress: (chars, positionSec) => {
             if (operationSignal.aborted || Date.now() - lastWrite < 1000) return;
             lastWrite = Date.now();
-            void db.jobs.update(job.id, { progressChars: chars }).catch(() => {});
+            void db.jobs.update(job.id, { progressChars: chars, ...(positionSec !== undefined ? { progressSec: positionSec } : {}) }).catch(() => {});
           },
           // A broken-off answer is kept, so neither the automatic retry nor "Erneut versuchen" starts over.
           resumeFrom: job.partialResult,

@@ -39,7 +39,7 @@ function fakeAi(impl: (params: Record<string, unknown>) => Promise<AsyncGenerato
 }
 
 describe('streamText', () => {
-  it('sends prompt and audio, asks for low thinking and JSON, and joins the streamed text', async () => {
+  it('sends prompt and audio, asks for minimal thinking and JSON, and joins the streamed text', async () => {
     const { ai, generateContentStream } = fakeAi(async () => chunks('{"a":', '1}'));
     const progress: number[] = [];
     const text = await streamText(ai, 'gemini-x', 'Transkribiere', audio, { jsonSchema: { type: 'object' }, onProgress: (n) => progress.push(n) });
@@ -50,7 +50,7 @@ describe('streamText', () => {
     expect(params.contents).toEqual([
       { role: 'user', parts: [{ text: 'Transkribiere' }, { fileData: { fileUri: audio.uri, mimeType: 'audio/mp4' } }] },
     ]);
-    expect(params.config).toMatchObject({ responseMimeType: 'application/json', responseJsonSchema: { type: 'object' }, thinkingConfig: { thinkingLevel: 'LOW' } });
+    expect(params.config).toMatchObject({ responseMimeType: 'application/json', responseJsonSchema: { type: 'object' }, thinkingConfig: { thinkingLevel: 'MINIMAL' } });
   });
 
   it('sends small recordings inline instead of as a file reference', async () => {
@@ -66,7 +66,26 @@ describe('streamText', () => {
       return chunks('ok');
     });
     await expect(streamText(ai, 'm', 'p', audio)).resolves.toBe('ok');
+    const levels = generateContentStream.mock.calls.map((c) => (c[0].config as { thinkingConfig?: { thinkingLevel: string } }).thinkingConfig?.thinkingLevel);
+    expect(levels).toEqual(['MINIMAL', 'LOW', undefined]);
+  });
+
+  it('steps down to low thinking if the model does not know minimal', async () => {
+    const { ai, generateContentStream } = fakeAi(async (params) => {
+      const level = (params.config as { thinkingConfig?: { thinkingLevel: string } }).thinkingConfig?.thinkingLevel;
+      if (level === 'MINIMAL') throw new HttpError('gemini', 400, 'Thinking level MINIMAL is not supported for this model.');
+      return chunks('ok');
+    });
+    await expect(streamText(ai, 'm', 'p', audio)).resolves.toBe('ok');
     expect(generateContentStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('ends the answer early when the caller says so, keeping the text', async () => {
+    const { ai } = fakeAi(async () => chunks('ab', 'cd', 'ef'));
+    const error = await streamText(ai, 'm', 'p', audio, { stopWhen: (t) => (t.length >= 4 ? 'Schleife' : undefined) }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(StreamCutError);
+    expect((error as StreamCutError).partial).toBe('abcd');
+    expect((error as StreamCutError).message).toBe('Schleife');
   });
 
   it('explains when the model cannot take audio', async () => {

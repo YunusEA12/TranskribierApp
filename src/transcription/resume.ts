@@ -7,6 +7,11 @@ import { validateTranscriptResult } from './schema';
 
 /** A continuation may begin a little before the requested time; anything earlier is a repeat and dropped. */
 const RESUME_TOLERANCE_SEC = 10;
+/**
+ * A segment covers about a minute of speech, roughly 1,000 characters. Far more text without a new segment
+ * means Gemini is caught in a loop, repeating the same words until its output limit.
+ */
+const LOOP_CHARS = 8000;
 
 /**
  * Parses JSON that broke off midway: cuts after the last complete object or array and closes what is
@@ -82,4 +87,18 @@ export function joinTranscripts(before: TranscriptResult, after: TranscriptResul
   const segments = [...before.segments, ...fresh];
   const speakers = [...new Set([...before.speakers, ...after.speakers])].filter((id) => segments.some((s) => s.speaker === id));
   return { title: before.title || after.title, language: before.language || after.language, speakers, segments };
+}
+
+/** Start time of the newest segment in a transcript answer that is still arriving, in seconds. */
+export function latestStartSec(text: string): number | undefined {
+  // Quotes inside text values are escaped, so this finds keys only.
+  const i = text.lastIndexOf('"start"');
+  if (i < 0) return undefined;
+  const value = /^"start"\s*:\s*"([^"]*)"/.exec(text.slice(i, i + 40))?.[1];
+  return value === undefined ? undefined : (parseClock(value) ?? undefined);
+}
+
+/** True if the answer has run on far too long without a new segment (see LOOP_CHARS). */
+export function looksStuck(text: string): boolean {
+  return text.length - Math.max(0, text.lastIndexOf('"start"')) > LOOP_CHARS;
 }

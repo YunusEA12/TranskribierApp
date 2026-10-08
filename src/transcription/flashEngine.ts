@@ -9,13 +9,14 @@ import type { TranscriptResult } from '../types';
 import type { AudioInput, TranscribeContext, TranscribeOptions, TranscriptionEngine } from './engine';
 import { StreamCutError, streamText } from './gemini';
 import { buildContinuationPrompt, buildTranscriptionPrompt } from './prompt';
-import { joinTranscripts, resumePlan, salvageTranscript } from './resume';
+import { joinTranscripts, latestStartSec, looksStuck, resumePlan, salvageTranscript } from './resume';
 import { TRANSCRIPT_SCHEMA, validateTranscriptResult } from './schema';
 
 /** Breaks in a row that bring no new segment before giving up. A break with progress resets the count. */
 const MAX_BREAKS_WITHOUT_PROGRESS = 3;
 /** Upper bound for requests per transcription, whatever happens. */
 const MAX_REQUESTS = 20;
+const STUCK_MESSAGE = 'Gemini ist beim Transkribieren hängen geblieben und hat sich ständig wiederholt. „Erneut versuchen“ macht ab der letzten guten Stelle weiter.';
 
 function parseJson(text: string): unknown {
   try {
@@ -52,7 +53,8 @@ export class FlashEngine implements TranscriptionEngine {
           jsonSchema: TRANSCRIPT_SCHEMA,
           signal: context.signal,
           firstChunkMs: context.firstChunkMs,
-          onProgress: context.onProgress,
+          onProgress: (chars, sofar) => context.onProgress?.(chars, latestStartSec(sofar)),
+          stopWhen: (sofar) => (looksStuck(sofar) ? STUCK_MESSAGE : undefined),
         });
       } catch (e) {
         if (!(e instanceof StreamCutError)) throw e;

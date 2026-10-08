@@ -36,6 +36,8 @@ export interface Job {
   upload?: UploadedAudio;
   /** Characters of transcript Gemini has sent so far (progress display while transcribing). */
   progressChars?: number;
+  /** How far into the recording the transcript has got, in seconds (progress display while transcribing). */
+  progressSec?: number;
   /** Transcribed so far when an answer broke off; transcription continues from here. */
   partialResult?: TranscriptResult;
   result?: TranscriptResult;
@@ -98,7 +100,7 @@ export function uploadDone(upload: UploadedAudio, now: number): Partial<Job> {
 }
 
 export function transcriptionDone(result: TranscriptResult, model: string, now: number): Partial<Job> {
-  return { status: 'saving', stepStartedAt: now, result, model, progressChars: undefined, partialResult: undefined, updatedAt: now };
+  return { status: 'saving', stepStartedAt: now, result, model, progressChars: undefined, progressSec: undefined, partialResult: undefined, updatedAt: now };
 }
 
 export function savingDone(vaultPath: string, now: number): Partial<Job> {

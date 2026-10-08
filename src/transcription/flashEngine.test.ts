@@ -88,6 +88,21 @@ describe('FlashEngine', () => {
     expect(prompts).toHaveLength(1);
   });
 
+  it('reports how far into the recording the transcript has got', async () => {
+    const { ai } = fakeAi([{ chunks: [firstPart.slice(0, 120), firstPart.slice(120)] }]);
+    const positions: Array<number | undefined> = [];
+    await new FlashEngine(ai, 'm').transcribe(audio, options, { onProgress: (_c, sec) => positions.push(sec) });
+    expect(positions.at(-1)).toBe(120);
+  });
+
+  it('stops an answer caught in a loop and continues from the last good segment', async () => {
+    const looping = firstPart.slice(0, -2) + ',{"speaker":"S2","start":"03:00","text":"' + 'Vier '.repeat(2000);
+    const { ai, prompts } = fakeAi([{ chunks: [looping] }, { chunks: [rest] }]);
+    const r = await new FlashEngine(ai, 'm').transcribe(audio, options);
+    expect(r.segments.map((s) => s.text)).toEqual(['Eins', 'Zwei', 'Drei', 'Vier', 'Fünf']);
+    expect(prompts[1]).toContain('from 02:00 to the end');
+  });
+
   it('gives up after three breaks without progress, saying that a retry continues', async () => {
     const { ai } = fakeAi([
       { chunks: ['{"title":"x"'], breaks: true },

@@ -54,14 +54,25 @@ function doneUntil(job: Job): string | undefined {
 
 function TranscribingInfo({ job }: { job: Job }) {
   const until = doneUntil(job);
+  // How far into the recording Gemini has written, e.g. "bis 07:30 von 19:25".
+  const position = job.progressSec !== undefined && job.durationSec > 0 ? Math.min(job.progressSec, job.durationSec) : undefined;
   return (
-    <small>
-      {until && `Bis ${until} ist es schon transkribiert, Gemini macht dort weiter. `}
-      {job.progressChars
-        ? `Gemini schreibt das Transkript … ${job.progressChars.toLocaleString('de-DE')} Zeichen.`
-        : 'Gemini hört sich die Aufnahme an …'}{' '}
-      Bitte die App geöffnet lassen, bis es fertig ist.
-    </small>
+    <>
+      {position !== undefined && (
+        <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(job.durationSec)} aria-valuenow={Math.round(position)}>
+          <span style={{ width: `${(position / job.durationSec) * 100}%` }} />
+        </div>
+      )}
+      <small>
+        {until && `Bis ${until} ist es schon transkribiert, Gemini macht dort weiter. `}
+        {position !== undefined
+          ? `Gemini schreibt das Transkript … bis ${formatClock(position)} von ${formatClock(job.durationSec)}.`
+          : job.progressChars
+            ? `Gemini schreibt das Transkript … ${job.progressChars.toLocaleString('de-DE')} Zeichen.`
+            : 'Gemini hört sich die Aufnahme an …'}{' '}
+        Bitte die App geöffnet lassen, bis es fertig ist.
+      </small>
+    </>
   );
 }
 
