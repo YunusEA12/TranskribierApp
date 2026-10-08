@@ -46,9 +46,17 @@ function StepTimer({ since }: { since?: number }) {
   return <span className="step-timer">läuft seit {formatClock((now - since) / 1000)}</span>;
 }
 
+/** How far an interrupted transcription got, e.g. "12:01" (the last segment is redone from there). */
+function doneUntil(job: Job): string | undefined {
+  const segments = job.partialResult?.segments;
+  return segments?.[segments.length - 1]?.start;
+}
+
 function TranscribingInfo({ job }: { job: Job }) {
+  const until = doneUntil(job);
   return (
     <small>
+      {until && `Bis ${until} ist es schon transkribiert, Gemini macht dort weiter. `}
       {job.progressChars
         ? `Gemini schreibt das Transkript … ${job.progressChars.toLocaleString('de-DE')} Zeichen.`
         : 'Gemini hört sich die Aufnahme an …'}{' '}
@@ -86,6 +94,7 @@ function JobCard({ job, waitingReason }: { job: Job; waitingReason: string }) {
       {job.status === 'failed' && (
         <>
           <p className="error-text">{job.error}</p>
+          {job.failedStep === 'transcribing' && doneUntil(job) && <small>Bis {doneUntil(job)} ist es schon transkribiert.</small>}
           <div className="actions">
             <button
               className="btn-small btn-vault"

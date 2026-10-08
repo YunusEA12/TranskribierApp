@@ -112,6 +112,23 @@ function isThinkingUnsupported(e: unknown): boolean {
   return e instanceof HttpError && e.status === 400 && /thinking/i.test(e.message);
 }
 
+/**
+ * The answer broke off before it was complete: connection lost (e.g. iOS suspended the app), the stream
+ * ended mid-message ("Incomplete JSON segment at the end"), Gemini went quiet after it had started, or the
+ * answer hit the output limit. `partial` is the text received until then, so the caller can continue
+ * instead of starting over.
+ */
+export class StreamCutError extends UserError {
+  constructor(readonly partial: string) {
+    super('Die Verbindung zu Gemini ist abgerissen, vermutlich weil die App im Hintergrund war oder das Netz weg war. „Erneut versuchen“ macht dort weiter, wo es abgebrochen ist.');
+  }
+}
+
+function isStreamBreak(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e);
+  return isNetworkError(e) || e instanceof SyntaxError || /incomplete json segment|exception parsing stream chunk/i.test(message);
+}
+
 /** Text answer for a prompt plus an uploaded audio file. Low thinking: a verbatim transcript needs no reasoning. */
 export async function streamText(ai: GoogleGenAI, model: string, prompt: string, audio: AudioInput, options: StreamOptions = {}): Promise<string> {
   const audioPart = 'data' in audio ? { inlineData: { data: audio.data, mimeType: audio.mimeType } } : { fileData: { fileUri: audio.uri, mimeType: audio.mimeType } };
@@ -139,12 +156,6 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
       for (;;) {
         const next = await boundedRequest(() => geminiCall(() => iterator.next()), Math.max(1, Math.min((text ? NEXT_CHUNK_MS : timeout) - (Date.now() - lastTextAt), 20 * 60 * 1000 - (Date.now() - began))), stalledMessage, options.signal);
         if (next.done) break;
-        const candidate = next.value.candidates?.[0];
-        if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
-          throw new UserError(candidate.finishReason === 'MAX_TOKENS'
-            ? 'Das Transkript ist zu lang für eine Antwort. Bitte die Aufnahme in kürzere Teile aufteilen.'
-            : `Gemini hat die Ausgabe beendet (${candidate.finishReason}). Bitte eine andere Aufnahme oder ein anderes Modell versuchen.`);
-        }
         // Thought-only/empty chunks must not keep a stalled request alive indefinitely.
         const piece = next.value.text ?? '';
         if (piece) {
@@ -152,23 +163,42 @@ export async function streamText(ai: GoogleGenAI, model: string, prompt: string,
           text += piece;
           options.onProgress?.(text.length);
         }
+        const reason = next.value.candidates?.[0]?.finishReason;
+        // Output limit reached: the text so far is good, the caller asks for the rest.
+        if (reason === 'MAX_TOKENS') throw new StreamCutError(text);
+        if (reason && reason !== 'STOP') {
+          throw new UserError(`Gemini hat die Ausgabe beendet (${reason}). Bitte eine andere Aufnahme oder ein anderes Modell versuchen.`);
+        }
       }
       if (!text) throw new UserError('Gemini hat keinen Text geliefert. Bitte Modell und Aufnahme prüfen.');
       return text;
     } catch (e) {
       controller.abort();
+      if (options.signal?.aborted || e instanceof StreamCutError) throw e;
+      const stalled = e instanceof UserError && e.message === stalledMessage;
       // Some mobile connections cannot sustain SSE. Retry once with a regular JSON response.
-      if (!options.signal?.aborted && !text && (isNetworkError(e) || (e instanceof UserError && e.message === stalledMessage))) {
-        const response = await boundedRequest(
-          (signal) => geminiCall(() => ai.models.generateContent({ model, contents, config: config(withThinking, signal) })),
-          timeout, stalledMessage, options.signal,
-        );
+      if (!text && (isNetworkError(e) || stalled)) {
+        let response;
+        try {
+          response = await boundedRequest(
+            (signal) => geminiCall(() => ai.models.generateContent({ model, contents, config: config(withThinking, signal) })),
+            timeout, stalledMessage, options.signal,
+          );
+        } catch (e2) {
+          if (!options.signal?.aborted && isStreamBreak(e2)) throw new StreamCutError('');
+          throw e2;
+        }
         const reason = response.candidates?.[0]?.finishReason;
+        if (reason === 'MAX_TOKENS') throw new StreamCutError(response.text ?? '');
         if (reason && reason !== 'STOP') throw new UserError(`Gemini hat die Antwort abgebrochen (${reason}). Bitte eine kürzere Aufnahme versuchen.`);
         if (!response.text) throw new UserError('Gemini hat keinen Text geliefert. Bitte Modell und Aufnahme prüfen.');
         options.onProgress?.(response.text.length);
         return response.text;
       }
+      // Broke off midway (also a server error after text came): hand over what arrived.
+      const status = (e as { status?: unknown } | null)?.status;
+      const serverErrorMidway = Boolean(text) && typeof status === 'number' && status >= 500;
+      if (stalled || serverErrorMidway || isStreamBreak(e)) throw new StreamCutError(text);
       throw e;
     } finally {
       controller.abort();

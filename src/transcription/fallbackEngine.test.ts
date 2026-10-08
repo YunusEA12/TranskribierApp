@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HttpError } from '../lib/errors';
 import type { TranscriptResult } from '../types';
-import type { TranscriptionEngine } from './engine';
+import type { TranscribeContext, TranscriptionEngine } from './engine';
 import { FallbackEngine } from './fallbackEngine';
 
 const result = (title: string): TranscriptResult => ({ title, language: 'de', speakers: ['S1'], segments: [{ speaker: 'S1', start: '00:00', text: 'x' }] });
@@ -47,6 +47,29 @@ describe('FallbackEngine', () => {
     const fallback = engine('small', async () => result('B'));
     await expect(new FallbackEngine(primary, fallback).transcribe(audio, options)).rejects.toThrow('bad key');
     expect(fallback.calls).toBe(0);
+  });
+
+  it('lets the fallback continue from what the primary model already transcribed', async () => {
+    const partial = result('Teil');
+    const primary = {
+      model: 'big',
+      transcribe: async (_a: unknown, _o: unknown, context?: TranscribeContext) => {
+        await context?.onPartial?.(partial);
+        throw new HttpError('gemini', 429, 'RESOURCE_EXHAUSTED');
+      },
+    };
+    let resumedFrom: TranscriptResult | undefined;
+    const fallback = {
+      model: 'small',
+      transcribe: async (_a: unknown, _o: unknown, context?: TranscribeContext) => {
+        resumedFrom = context?.resumeFrom;
+        return result('B');
+      },
+    };
+    const stored: TranscriptResult[] = [];
+    await new FallbackEngine(primary, fallback).transcribe(audio, options, { onPartial: (p) => void stored.push(p) });
+    expect(resumedFrom).toBe(partial);
+    expect(stored).toEqual([partial]);
   });
 
   it('reports the fallback error when both are exhausted', async () => {

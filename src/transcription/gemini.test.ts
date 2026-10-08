@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GoogleGenAI } from '@google/genai';
 import { HttpError } from '../lib/errors';
-import { streamText, uploadAudio } from './gemini';
+import { StreamCutError, streamText, uploadAudio } from './gemini';
 
 const audio = { name: 'files/a', uri: 'https://x/files/a', mimeType: 'audio/mp4', uploadedAt: 0 };
 
@@ -31,7 +31,9 @@ async function* chunks(...texts: string[]) {
   for (const text of texts) yield { text };
 }
 
-function fakeAi(impl: (params: Record<string, unknown>) => Promise<AsyncGenerator<{ text: string }>>) {
+type Chunk = { text: string; candidates?: Array<{ finishReason?: string }> };
+
+function fakeAi(impl: (params: Record<string, unknown>) => Promise<AsyncGenerator<Chunk>>) {
   const generateContentStream = vi.fn(impl);
   return { ai: { models: { generateContentStream, generateContent: vi.fn(() => new Promise(() => {})) } } as unknown as GoogleGenAI, generateContentStream };
 }
@@ -92,6 +94,45 @@ describe('streamText', () => {
 });
 
 describe('stream recovery', () => {
+  it('hands over the text received so far when the stream breaks off', async () => {
+    const { ai } = fakeAi(async () =>
+      (async function* () {
+        yield { text: '{"segments":[' };
+        throw new Error('Incomplete JSON segment at the end');
+      })(),
+    );
+    const error = await streamText(ai, 'm', 'p', audio).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(StreamCutError);
+    expect((error as StreamCutError).partial).toBe('{"segments":[');
+  });
+
+  it('hands over the text so far when the answer hits the output limit', async () => {
+    const { ai } = fakeAi(async () =>
+      (async function* () {
+        yield { text: '{"segments":[' };
+        yield { text: '{"speaker"', candidates: [{ finishReason: 'MAX_TOKENS' }] };
+      })(),
+    );
+    const error = await streamText(ai, 'm', 'p', audio).catch((e: unknown) => e);
+    expect((error as StreamCutError).partial).toBe('{"segments":[{"speaker"');
+  });
+
+  it('reports a break if the regular request after a failed stream loses its connection, too', async () => {
+    const generateContent = vi.fn(async () => {
+      throw new TypeError('Load failed');
+    });
+    const ai = {
+      models: {
+        generateContentStream: async () => {
+          throw new TypeError('Load failed');
+        },
+        generateContent,
+      },
+    } as unknown as GoogleGenAI;
+    await expect(streamText(ai, 'm', 'p', audio)).rejects.toBeInstanceOf(StreamCutError);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to regular generation when a stream ignores abort entirely', async () => {
     vi.useFakeTimers();
     const generateContent = vi.fn(async () => ({ text: 'Hallo', candidates: [{ finishReason: 'STOP' }] }));

@@ -20,14 +20,23 @@ export class FallbackEngine implements TranscriptionEngine {
   }
 
   async transcribe(audio: AudioInput, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
+    // The fallback continues from what the primary model managed before its quota ran out.
+    let latest = context.resumeFrom;
+    const tracked: TranscribeContext = {
+      ...context,
+      onPartial: async (partial) => {
+        latest = partial;
+        await context.onPartial?.(partial);
+      },
+    };
     try {
-      const result = await this.primary.transcribe(audio, options, context);
+      const result = await this.primary.transcribe(audio, options, tracked);
       this.model = this.primary.model;
       return result;
     } catch (e) {
       if (!isQuotaError(e)) throw e;
       console.warn(`Quota exhausted for ${this.primary.model}, falling back to ${this.fallback.model}`);
-      const result = await this.fallback.transcribe(audio, options, context);
+      const result = await this.fallback.transcribe(audio, options, { ...tracked, resumeFrom: latest });
       this.model = this.fallback.model;
       return result;
     }

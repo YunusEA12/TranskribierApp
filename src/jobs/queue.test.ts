@@ -25,6 +25,16 @@ describe('job state machine', () => {
     expect(currentStep(job, 5000)).toBeNull();
   });
 
+  it('keeps a partial transcript across a failed transcription and drops it once complete', () => {
+    let job = apply(apply(base, uploadDone(upload, 2000)), { partialResult: result });
+    job = apply(job, stepFailed('transcribing', 'abgerissen', 3000));
+    job = apply(job, retry(job, 4000));
+    expect(job.status).toBe('transcribing');
+    expect(job.partialResult).toEqual(result);
+    job = apply(job, transcriptionDone(result, 'm', 5000));
+    expect(job.partialResult).toBeUndefined();
+  });
+
   it('nextStatus follows the documented order', () => {
     expect(nextStatus('recorded')).toBe('uploading');
     expect(nextStatus('saving')).toBe('done');

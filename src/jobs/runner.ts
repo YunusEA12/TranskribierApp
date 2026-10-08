@@ -8,6 +8,7 @@ import { createEngine } from '../transcription/createEngine';
 import type { AudioInput } from '../transcription/engine';
 import { createGeminiClient, deleteUpload, geminiMimeType, INLINE_MAX_BYTES, uploadAudio } from '../transcription/gemini';
 import { blobToBase64 } from '../lib/blob';
+import { untilForeground } from '../lib/foreground';
 import type { AudioSource, TranscriptMeta } from '../types';
 import { createTranscript, toMarkdown } from '../vault/markdown';
 import { parseTranscriptPath, transcriptPath } from '../vault/paths';
@@ -234,6 +235,12 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
             lastWrite = Date.now();
             void db.jobs.update(job.id, { progressChars: chars }).catch(() => {});
           },
+          // A broken-off answer is kept, so neither the automatic retry nor "Erneut versuchen" starts over.
+          resumeFrom: job.partialResult,
+          onPartial: async (partial) => {
+            if (!operationSignal.aborted) await db.jobs.update(job.id, { partialResult: partial, progressChars: undefined });
+          },
+          beforeRetry: () => untilForeground(operationSignal),
         },
       ), 20 * 60 * 1000, 'Die Transkription dauert zu lange. Die Aufnahme bleibt gespeichert. Bitte erneut versuchen.', signal);
       await db.jobs.update(job.id, transcriptionDone(result, engine.model, Date.now()));

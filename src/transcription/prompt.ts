@@ -1,5 +1,6 @@
 // Prompt for the flash engine (PLAN.md 3.4). Verbatim: nothing summarized, smoothed or invented.
 
+import type { TranscriptResult } from '../types';
 import type { TranscribeOptions } from './engine';
 
 export function buildTranscriptionPrompt(options: TranscribeOptions): string {
@@ -24,6 +25,23 @@ export function buildTranscriptionPrompt(options: TranscribeOptions): string {
   lines.push('- "title": at most 8 words, in the language of the recording, describing the topic.');
   lines.push('- "language": the main language as ISO 639-1 code.');
   return lines.join('\n');
+}
+
+/**
+ * Prompt for the rest of a recording after an interrupted answer (PLAN.md 3.5): same rules, a time window,
+ * and the speakers and last passages so far, so that S1 stays S1.
+ */
+export function buildContinuationPrompt(options: TranscribeOptions, before: TranscriptResult, resumeAt: string): string {
+  const lastPassages = before.segments.slice(-3).map((s) => `[${s.start}] ${s.speaker}: ${s.text}`);
+  return [
+    buildTranscriptionPrompt(options),
+    '',
+    `Transcribe only the part of the recording from ${resumeAt} to the end. An earlier transcript of the part before ${resumeAt} already exists.`,
+    `- "start" stays the time from the beginning of the whole recording, so the first segment starts at about ${resumeAt}.`,
+    `- Speakers so far: ${before.speakers.join(', ')}. Use the same label for the same voice; a new voice gets the next free label.`,
+    '- For orientation, the last passages before that point were (do not repeat them):',
+    ...lastPassages,
+  ].join('\n');
 }
 
 export function buildTitlePrompt(transcriptExcerpt: string): string {

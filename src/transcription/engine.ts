@@ -8,6 +8,12 @@ export interface TranscribeContext {
   firstChunkMs?: number;
   /** Number of characters Gemini has sent so far, for a progress display. */
   onProgress?: (chars: number) => void;
+  /** What an earlier, interrupted attempt already transcribed; the engine continues after it. */
+  resumeFrom?: TranscriptResult;
+  /** Everything transcribed so far, whenever an answer broke off; stored so a later retry can continue. */
+  onPartial?: (partial: TranscriptResult) => Promise<void> | void;
+  /** Waits before the engine retries on its own after a break (e.g. until the app is open again). */
+  beforeRetry?: () => Promise<void>;
 }
 
 export interface TranscribeOptions {
