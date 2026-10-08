@@ -72,7 +72,13 @@ export function toUserMessage(e: unknown, service?: 'github' | 'gemini'): string
         return 'Gemini-Kontingent erschöpft. Später erneut versuchen.';
     }
   }
-  if (status !== undefined && status >= 500) return 'Der Server hat einen Fehler gemeldet. Bitte später erneut versuchen.';
+  if (status !== undefined && status >= 500) {
+    // Google's reason (e.g. "The model is overloaded") tells a passing overload from a lasting problem.
+    const reason = `${status}: ${googleErrorDetail(e).slice(0, 120)}`;
+    return svc === 'gemini'
+      ? `Gemini hat einen Fehler auf Googles Seite gemeldet (${reason}). Die Aufnahme bleibt gespeichert. Bitte in ein paar Minuten „Erneut versuchen“.`
+      : `Der Server hat einen Fehler gemeldet (${reason}). Bitte später erneut versuchen.`;
+  }
   const detail = e instanceof Error ? e.message : String(e);
   return `Unerwarteter Fehler: ${detail}`;
 }

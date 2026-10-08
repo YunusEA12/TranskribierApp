@@ -18,4 +18,22 @@ describe('installed Gemini SDK transport', () => {
     expect(JSON.stringify(body.contents)).toContain('YXVkaW8=');
     expect(body.generationConfig.responseMimeType).toBe('application/json');
   });
+
+  it('repeats a request Google answers with a server error', async () => {
+    vi.useFakeTimers();
+    try {
+      const overloaded = () => new Response(JSON.stringify({ error: { code: 503, message: 'The model is overloaded.', status: 'UNAVAILABLE' } }), { status: 503 });
+      const ok = new Response(`data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'Hallo' }] }, finishReason: 'STOP' }] })}\n\n`, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(overloaded()).mockResolvedValueOnce(overloaded()).mockResolvedValueOnce(ok);
+      const pending = streamText(createGeminiClient('test-key'), 'test-model', 'Transcribe', { data: 'YXVkaW8=', mimeType: 'audio/mp4' });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(pending).resolves.toBe('Hallo');
+      expect(fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

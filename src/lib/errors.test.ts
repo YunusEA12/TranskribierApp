@@ -15,6 +15,13 @@ describe('toUserMessage', () => {
     expect(toUserMessage(e)).toBe('Gemini hat die Anfrage abgelehnt: Unsupported MIME type: audio/xyz');
   });
 
+  it('names Google\'s reason for server errors', () => {
+    const e = new HttpError('gemini', 503, 'got status: 503 Service Unavailable. {"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}');
+    expect(toUserMessage(e)).toBe(
+      'Gemini hat einen Fehler auf Googles Seite gemeldet (503: The model is overloaded. Please try again later.). Die Aufnahme bleibt gespeichert. Bitte in ein paar Minuten „Erneut versuchen“.',
+    );
+  });
+
   it('maps GitHub statuses', () => {
     expect(toUserMessage(new HttpError('github', 401, 'x'))).toMatch(/Token/);
     expect(toUserMessage(new HttpError('github', 404, 'x'))).toMatch(/nicht gefunden/);

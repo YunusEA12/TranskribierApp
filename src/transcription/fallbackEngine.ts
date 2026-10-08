@@ -1,5 +1,6 @@
-// When the main model's quota is used up (HTTP 429, after the SDK's own retries), try a weaker model
-// instead of failing. `model` reports the model that actually produced the transcript.
+// When the main model's quota is used up (HTTP 429) or Google keeps failing for it (5xx, e.g. overloaded),
+// both after the SDK's own retries, try the fallback model instead of failing. `model` reports the model
+// that actually produced the transcript.
 
 import { HttpError } from '../lib/errors';
 import type { TranscriptResult } from '../types';
@@ -7,6 +8,10 @@ import type { AudioInput, TranscribeContext, TranscribeOptions, TranscriptionEng
 
 export function isQuotaError(e: unknown): boolean {
   return e instanceof HttpError && e.status === 429;
+}
+
+function shouldFallBack(e: unknown): boolean {
+  return isQuotaError(e) || (e instanceof HttpError && e.status >= 500);
 }
 
 export class FallbackEngine implements TranscriptionEngine {
@@ -20,7 +25,7 @@ export class FallbackEngine implements TranscriptionEngine {
   }
 
   async transcribe(audio: AudioInput, options: TranscribeOptions, context: TranscribeContext = {}): Promise<TranscriptResult> {
-    // The fallback continues from what the primary model managed before its quota ran out.
+    // The fallback continues from what the primary model managed before it failed.
     let latest = context.resumeFrom;
     const tracked: TranscribeContext = {
       ...context,
@@ -34,8 +39,8 @@ export class FallbackEngine implements TranscriptionEngine {
       this.model = this.primary.model;
       return result;
     } catch (e) {
-      if (!isQuotaError(e)) throw e;
-      console.warn(`Quota exhausted for ${this.primary.model}, falling back to ${this.fallback.model}`);
+      if (!shouldFallBack(e)) throw e;
+      console.warn(`${this.primary.model} unavailable (${(e as HttpError).status}), falling back to ${this.fallback.model}`);
       const result = await this.fallback.transcribe(audio, options, { ...tracked, resumeFrom: latest });
       this.model = this.fallback.model;
       return result;

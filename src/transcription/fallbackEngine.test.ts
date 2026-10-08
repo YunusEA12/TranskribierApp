@@ -40,6 +40,14 @@ describe('FallbackEngine', () => {
     expect(e.model).toBe('small');
   });
 
+  it('switches to the fallback when Google keeps failing for the main model', async () => {
+    const primary = engine('big', async () => {
+      throw new HttpError('gemini', 503, 'The model is overloaded.');
+    });
+    const e = new FallbackEngine(primary, engine('small', async () => result('B')));
+    expect((await e.transcribe(audio, options)).title).toBe('B');
+  });
+
   it('does not hide other errors', async () => {
     const primary = engine('big', async () => {
       throw new HttpError('gemini', 403, 'bad key');

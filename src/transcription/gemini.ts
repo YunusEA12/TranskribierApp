@@ -7,8 +7,12 @@ import { HttpError, UserError, isNetworkError } from '../lib/errors';
 import type { UploadedAudio } from '../jobs/queue';
 import type { AudioInput } from './engine';
 
+// The SDK repeats requests that fail with 408, 429 or 5xx (e.g. "503 The model is overloaded") only if
+// retryOptions is set. Waits about 2, 4, 8 and 16 seconds before giving up.
+const RETRY = { attempts: 5, initialDelay: 2, maxDelay: 30 };
+
 export function createGeminiClient(apiKey: string): GoogleGenAI {
-  return new GoogleGenAI({ apiKey: apiKey.trim(), httpOptions: { timeout: CLIENT_TIMEOUT_MS } });
+  return new GoogleGenAI({ apiKey: apiKey.trim(), httpOptions: { timeout: CLIENT_TIMEOUT_MS, retryOptions: RETRY } });
 }
 
 /** Re-throws SDK errors with a status as HttpError so the UI can map them. */
