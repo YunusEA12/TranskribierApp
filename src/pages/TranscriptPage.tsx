@@ -101,7 +101,14 @@ function TranscriptView({ markdown, path, record }: { markdown: string; path: st
     setTimeout(() => setCopied(false), 2000);
   };
   const file = () => new File([markdown], fileName, { type: 'text/markdown' });
-  const canShare = typeof navigator.canShare === 'function' && navigator.canShare({ files: [file()] });
+  const canShare = (() => {
+    try {
+      return typeof navigator.canShare === 'function' && navigator.canShare({ files: [file()] });
+    } catch {
+      return false;
+    }
+  })();
+
   const share = async () => {
     try {
       await navigator.share({ files: [file()], title });

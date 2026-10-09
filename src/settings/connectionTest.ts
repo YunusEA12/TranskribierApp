@@ -1,7 +1,7 @@
 import { HttpError, toUserMessage } from '../lib/errors';
 import { checkModel, createGeminiClient, listModels, NOT_FOR_AUDIO } from '../transcription/gemini';
 import { clientFromSettings } from '../vault/vaultRepo';
-import { REPO_RE, type Settings } from './settingsStore';
+import { allGeminiKeys, parseKeyList, REPO_RE, type Settings } from './settingsStore';
 
 export interface CheckResult {
   label: string;
@@ -37,18 +37,47 @@ export function suggestFallbackModel(models: string[], main: string): string | u
 export async function testGemini(s: Settings): Promise<GeminiReport> {
   const checks: CheckResult[] = [];
   let models: string[] = [];
-  if (!s.geminiKey.trim()) {
+  const keys = allGeminiKeys(s);
+  if (!keys.length) {
     checks.push({ label: 'Gemini-API-Key', ok: false, message: 'Bitte den Key einfügen.' });
     return { checks, models };
   }
-  const ai = createGeminiClient(s.geminiKey);
-  try {
-    models = await listModels(ai);
-  } catch (e) {
-    checks.push({ label: 'Gemini-API-Key', ok: false, message: toUserMessage(e, 'gemini') });
+
+  const fallbackKeys = parseKeyList(s.geminiFallbackKeys);
+  let workingAi = createGeminiClient(keys[0]!);
+
+  if (s.geminiKey.trim()) {
+    const ai = createGeminiClient(s.geminiKey.trim());
+    try {
+      models = await listModels(ai);
+      checks.push({ label: fallbackKeys.length ? 'Haupt-Key' : 'Gemini-API-Key', ok: true, message: `Key ok (${models.length} Modelle verfügbar).` });
+      workingAi = ai;
+    } catch (e) {
+      checks.push({ label: fallbackKeys.length ? 'Haupt-Key' : 'Gemini-API-Key', ok: false, message: toUserMessage(e, 'gemini') });
+    }
+  }
+
+  for (let i = 0; i < fallbackKeys.length; i++) {
+    const fbKey = fallbackKeys[i]!;
+    const fbAi = createGeminiClient(fbKey);
+    try {
+      const fbModels = await listModels(fbAi);
+      checks.push({ label: `Ersatz-Key ${i + 1}`, ok: true, message: `Key ok (${fbModels.length} Modelle verfügbar).` });
+      if (!models.length) {
+        models = fbModels;
+        workingAi = fbAi;
+      }
+    } catch (e) {
+      checks.push({ label: `Ersatz-Key ${i + 1}`, ok: false, message: toUserMessage(e, 'gemini') });
+    }
+  }
+
+  if (!models.length) {
     return { checks, models };
   }
-  checks.push({ label: 'Gemini-API-Key', ok: true, message: 'Key ok.' });
+
+  const ai = workingAi;
+
 
   const configured: Array<{ key: 'flashModel' | 'transcribeModel' | 'fallbackModel'; id: string }> = [{ key: 'flashModel', id: s.flashModel.trim() }];
   if (s.engine === 'transcribe') configured.push({ key: 'transcribeModel', id: s.transcribeModel.trim() });

@@ -39,3 +39,13 @@ describe('suggestFallbackModel', () => {
     expect(suggestFallbackModel(['gemini-3.8-flash'], 'gemini-3.8-flash')).toBeUndefined();
   });
 });
+
+describe('allGeminiKeys and parseKeyList', () => {
+  it('parses comma-, semicolon- and newline-separated keys', async () => {
+    const { allGeminiKeys, parseKeyList, DEFAULT_SETTINGS } = await import('./settingsStore');
+    expect(parseKeyList('key1, key2\nkey3; key4')).toEqual(['key1', 'key2', 'key3', 'key4']);
+    expect(allGeminiKeys({ ...DEFAULT_SETTINGS, geminiKey: 'k1', geminiFallbackKeys: 'k2, k3' })).toEqual(['k1', 'k2', 'k3']);
+    expect(allGeminiKeys({ ...DEFAULT_SETTINGS, geminiKey: 'k1', geminiFallbackKeys: 'k1, k2' })).toEqual(['k1', 'k2']);
+  });
+});
+

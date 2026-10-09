@@ -3,7 +3,7 @@
 
 import { blobToBase64 } from '../lib/blob';
 import { googleErrorDetail, toUserMessage } from '../lib/errors';
-import type { Settings } from '../settings/settingsStore';
+import { allGeminiKeys, type Settings } from '../settings/settingsStore';
 import { checkModel, createGeminiClient, deleteUpload, listModels, streamText, uploadAudio } from './gemini';
 import { buildTranscriptionPrompt } from './prompt';
 import { TRANSCRIPT_SCHEMA } from './schema';
@@ -52,18 +52,25 @@ export async function diagnoseTranscription(s: Settings, log: (line: DiagnosisLi
 }
 
 async function runChecks(s: Settings, log: (line: DiagnosisLine) => void): Promise<void> {
-  const key = s.geminiKey.trim();
+  const keys = allGeminiKeys(s);
   const clean = (e: unknown) => {
-    const detail = `${toUserMessage(e, 'gemini')} (${googleErrorDetail(e).slice(0, 160)})`;
-    return key ? detail.split(key).join('***') : detail;
+    let detail = `${toUserMessage(e, 'gemini')} (${googleErrorDetail(e).slice(0, 160)})`;
+    for (const k of keys) {
+      if (k) detail = detail.split(k).join('***');
+    }
+    return detail;
   };
-  if (!key) {
+  if (!keys.length) {
     log({ ok: false, text: 'Kein Gemini-Key eingetragen.' });
     return;
   }
+  const key = keys[0]!;
   const model = s.flashModel.trim();
   const ai = createGeminiClient(key);
-  log({ ok: null, text: `Modell: ${model} · App-Version ${__APP_VERSION__} · ${navigator.userAgent.match(/(iPhone|Android|Mac|Windows)[^;)]*/)?.[0] ?? 'Gerät unbekannt'}` });
+  const fallbackCount = keys.length - 1;
+  const fbText = fallbackCount > 0 ? ` · ${fallbackCount} Ersatz-Key(s)` : '';
+  log({ ok: null, text: `Modell: ${model}${fbText} · App-Version ${__APP_VERSION__} · ${navigator.userAgent.match(/(iPhone|Android|Mac|Windows)[^;)]*/)?.[0] ?? 'Gerät unbekannt'}` });
+
 
   let t = performance.now();
   try {

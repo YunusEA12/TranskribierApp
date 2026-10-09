@@ -3,9 +3,10 @@
 import { db } from '../db/db';
 import { boundedRequest } from '../lib/request';
 import { toUserMessage, UserError, HttpError } from '../lib/errors';
-import { getSettings, missingSettings, storageConnected } from '../settings/settingsStore';
+import { allGeminiKeys, getSettings, missingSettings, storageConnected } from '../settings/settingsStore';
 import { createEngine } from '../transcription/createEngine';
 import type { AudioInput } from '../transcription/engine';
+import { isQuotaError } from '../transcription/fallbackEngine';
 import { createGeminiClient, deleteUpload, geminiMimeType, INLINE_MAX_BYTES, uploadAudio } from '../transcription/gemini';
 import { blobToBase64 } from '../lib/blob';
 import { untilForeground } from '../lib/foreground';
@@ -13,6 +14,7 @@ import type { AudioSource, TranscriptMeta } from '../types';
 import { createTranscript, toMarkdown } from '../vault/markdown';
 import { parseTranscriptPath, transcriptPath } from '../vault/paths';
 import { clientFromSettings, saveTranscript, TranscriptCollisionError } from '../vault/vaultRepo';
+
 import {
   currentStep, isRunnable, newJob, retry, savingDone, stepFailed, stepStarted, transcriptionDone, uploadDone,
   type Job, type Step,
@@ -63,9 +65,12 @@ export async function retryJob(id: string): Promise<void> {
 
 /** Removes a job with its local audio and transcript, and the upload at Gemini if there is one. */
 export async function discardJob(id: string): Promise<void> {
+  await stopJob(id);
   const job = await db.jobs.get(id);
-  if (job?.upload?.name && job.status !== 'done' && getSettings().geminiKey) {
-    await deleteUpload(createGeminiClient(getSettings().geminiKey), job.upload.name);
+  const settings = getSettings();
+  const deleteKey = job?.upload?.key || settings.geminiKey;
+  if (job?.upload?.name && job.status !== 'done' && deleteKey) {
+    await deleteUpload(createGeminiClient(deleteKey), job.upload.name);
   }
   await db.transaction('rw', [db.jobs, db.audio, db.transcripts], async () => {
     await db.jobs.delete(id);
@@ -73,6 +78,7 @@ export async function discardJob(id: string): Promise<void> {
     await db.transcripts.delete(id);
   });
 }
+
 
 /** A vault path no other transcript on this device uses ("… (2).md" on collisions). */
 async function uniquePath(jobId: string, meta: Pick<TranscriptMeta, 'date' | 'time' | 'title'>, user: string): Promise<string> {
@@ -162,7 +168,8 @@ async function uploadPendingTranscripts(): Promise<void> {
     try {
       await uploadTranscript(t.id, t.path, t.markdown, t.title);
       const job = await db.jobs.get(t.id);
-      if (job?.upload?.name) await deleteUpload(createGeminiClient(getSettings().geminiKey), job.upload.name);
+      const deleteKey = job?.upload?.key || getSettings().geminiKey;
+      if (job?.upload?.name && deleteKey) await deleteUpload(createGeminiClient(deleteKey), job.upload.name);
     } catch {
       console.warn('Transcript upload failed; local copy retained.');
       return;
@@ -177,22 +184,48 @@ async function runJob(id: string): Promise<void> {
   active.set(id, { controller, done });
   try {
     const settings = getSettings();
-    const ai = createGeminiClient(settings.geminiKey);
-    for (;;) {
-      const job = await db.jobs.get(id);
-      if (!job || !isRunnable(job)) return;
-      const step = currentStep(job, Date.now());
-      if (!step) return;
-      await db.jobs.update(id, stepStarted(step, Date.now()));
-      try {
-        await runStep(step, job, settings, ai, controller.signal);
-      } catch (e) {
-        console.warn(`Job failed at ${step}; audio retained.`);
-        const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
-        if (step === 'transcribing') Object.assign(patch, { progressChars: undefined, progressSec: undefined, waitUntil: undefined });
-        await db.jobs.update(id, patch);
-        return;
+    const keys = allGeminiKeys(settings);
+    let keyIdx = 0;
+
+    while (keyIdx < Math.max(1, keys.length)) {
+      const currentKey = keys[keyIdx] || settings.geminiKey;
+      const ai = createGeminiClient(currentKey);
+      let advanceKey = false;
+
+      for (;;) {
+        const job = await db.jobs.get(id);
+        if (!job || !isRunnable(job)) return;
+        const step = currentStep(job, Date.now());
+        if (!step) return;
+        await db.jobs.update(id, stepStarted(step, Date.now()));
+        try {
+          await runStep(step, job, settings, ai, currentKey, controller.signal);
+        } catch (e) {
+          if (controller.signal.aborted) {
+            console.warn(`Job stopped at ${step}; audio retained.`);
+            const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
+            if (step === 'transcribing') Object.assign(patch, { progressChars: undefined, progressSec: undefined, waitUntil: undefined });
+            await db.jobs.update(id, patch);
+            return;
+          }
+
+          const isKeyOrQuota = step !== 'saving' && (isQuotaError(e) || (e instanceof HttpError && [400, 401, 403, 429].includes(e.status)));
+          if (isKeyOrQuota && keyIdx + 1 < keys.length) {
+            console.warn(`Key ${keyIdx + 1} failed at ${step}, falling back to key ${keyIdx + 2}`);
+            keyIdx++;
+            advanceKey = true;
+            break;
+          }
+
+          console.warn(`Job failed at ${step}; audio retained.`);
+          const patch = stepFailed(step, toUserMessage(e, step === 'saving' ? 'github' : 'gemini'), Date.now());
+          if (step === 'transcribing') Object.assign(patch, { progressChars: undefined, progressSec: undefined, waitUntil: undefined });
+          await db.jobs.update(id, patch);
+          return;
+        }
       }
+
+      if (!advanceKey) break;
     }
   } finally {
     active.delete(id);
@@ -200,7 +233,7 @@ async function runJob(id: string): Promise<void> {
   }
 }
 
-async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSettings>, ai: ReturnType<typeof createGeminiClient>, signal: AbortSignal) {
+async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSettings>, ai: ReturnType<typeof createGeminiClient>, currentKey: string, signal: AbortSignal) {
   switch (step) {
     case 'uploading': {
       const audio = await db.audio.get(job.id);
@@ -208,19 +241,28 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       // Small recordings skip the Files API and travel inside the transcription request: one round trip less.
       const upload =
         audio.blob.size <= INLINE_MAX_BYTES
-          ? { name: '', uri: '', mimeType: geminiMimeType(job.mimeType), uploadedAt: Date.now(), inline: true }
-          : await uploadAudio(ai, audio.blob, job.mimeType, signal);
+          ? { name: '', uri: '', mimeType: geminiMimeType(job.mimeType), uploadedAt: Date.now(), inline: true, key: currentKey }
+          : { ...(await uploadAudio(ai, audio.blob, job.mimeType, signal)), key: currentKey };
       await db.jobs.update(job.id, uploadDone(upload, Date.now()));
       return;
     }
     case 'transcribing': {
       const engine = createEngine(ai, settings);
-      let input: AudioInput = { uri: job.upload!.uri, mimeType: job.upload!.mimeType };
+      let input: AudioInput;
       const audio = await db.audio.get(job.id);
+      if (!audio) throw new UserError('Die Audiodatei ist auf diesem Gerät nicht mehr vorhanden.');
+
       // Also upgrade jobs that were already uploaded by an older app version.
-      if (job.upload!.inline || (audio && audio.blob.size <= INLINE_MAX_BYTES)) {
-        if (!audio) throw new UserError('Die Audiodatei ist auf diesem Gerät nicht mehr vorhanden.');
+      if (job.upload!.inline || audio.blob.size <= INLINE_MAX_BYTES) {
         input = { data: await blobToBase64(audio.blob), mimeType: job.upload!.mimeType };
+      } else {
+        // If the upload was created with a different key, re-upload with currentKey
+        if (job.upload?.key && job.upload.key !== currentKey) {
+          const newUpload = { ...(await uploadAudio(ai, audio.blob, job.mimeType, signal)), key: currentKey };
+          await db.jobs.update(job.id, { upload: newUpload });
+          job.upload = newUpload;
+        }
+        input = { uri: job.upload!.uri, mimeType: job.upload!.mimeType };
       }
       let lastWrite = 0;
       const result = await boundedRequest((operationSignal) => engine.transcribe(
@@ -279,8 +321,12 @@ async function runStep(step: Step, job: Job, settings: ReturnType<typeof getSett
       });
       await uploadTranscript(job.id, path, markdown, meta.title);
       // The transcript is safe on the device; the copy at Google is no longer needed (CLAUDE.md rule 8).
-      if (job.upload?.name) await deleteUpload(ai, job.upload.name);
+      if (job.upload?.name) {
+        const deleteClient = job.upload.key ? createGeminiClient(job.upload.key) : ai;
+        await deleteUpload(deleteClient, job.upload.name);
+      }
       return;
     }
   }
 }
+

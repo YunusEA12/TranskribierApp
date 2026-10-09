@@ -60,7 +60,19 @@ describe('audio to shared transcript', () => {
     await vi.waitFor(async () => expect((await db.jobs.get(id))?.status).toBe('done'));
     await finished();
   });
+  it('falls back to the next key when the primary key quota is exhausted', async () => {
+    saveSettings({ geminiKey: 'key1', geminiFallbackKeys: 'key2', userName: 'Yunus', githubToken: 'test-token', vaultRepo: 'a/b', storageVerified: true });
+    mocks.transcribe
+      .mockRejectedValueOnce(new HttpError('gemini', 429, 'Resource has been exhausted'))
+      .mockResolvedValueOnce(result);
+    const id = await enqueueAudio(audio);
+    await vi.waitFor(async () => expect((await db.jobs.get(id))?.status).toBe('done'));
+    await finished();
+    expect(mocks.transcribe).toHaveBeenCalledTimes(2);
+    expect((await db.transcripts.get(id))?.markdown).toContain('Hallo Welt.');
+  });
 });
+
 
 describe('remote collisions', () => {
   it('chooses a new filename instead of replacing a different remote recording', async () => {

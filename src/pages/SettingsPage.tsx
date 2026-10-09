@@ -6,12 +6,13 @@ import { kickRunner } from '../jobs/runner';
 import { APP_VERSION, BUILD_TIME, checkForUpdate, installUpdate, useUpdateReady } from '../pwa/update';
 import { testGemini, testStorage, type CheckResult } from '../settings/connectionTest';
 import { decodeInvite, encodeInvite } from '../settings/invite';
-import { DEFAULT_SETTINGS, getSettings, saveSettings, storageConnected, useSettings, type Settings } from '../settings/settingsStore';
+import { DEFAULT_SETTINGS, getSettings, saveSettings, storageConnected, useSettings, allGeminiKeys, type Settings } from '../settings/settingsStore';
 import { diagnoseTranscription, type DiagnosisLine } from '../transcription/diagnose';
 import { userFolder } from '../vault/paths';
 
 const PEOPLE = ['Yunus', 'Calvin'];
-const CHECKED_KEYS = new Set<keyof Settings>(['geminiKey', 'engine', 'flashModel', 'transcribeModel', 'fallbackModel']);
+const CHECKED_KEYS = new Set<keyof Settings>(['geminiKey', 'geminiFallbackKeys', 'engine', 'flashModel', 'transcribeModel', 'fallbackModel']);
+
 const REPO_NAME = DEFAULT_SETTINGS.vaultRepo.split('/')[1]!;
 const NEW_REPO_URL = `https://github.com/new?name=${REPO_NAME}&visibility=private&description=${encodeURIComponent('Gemeinsamer Speicher der Mitschrift-App')}`;
 const NEW_TOKEN_URL = `https://github.com/settings/personal-access-tokens/new?name=Mitschrift&description=${encodeURIComponent('Mitschrift-App')}&expires_in=366&contents=write`;
@@ -75,9 +76,10 @@ function DiagnosisCard() {
         Schickt einen 2-Sekunden-Testton an Gemini und prüft jeden Schritt einzeln. Dauert meist unter einer Minute; die App dabei geöffnet
         lassen. Das Ergebnis enthält keinen Key.
       </small>
-      <button className="btn-ghost" disabled={running || !settings.geminiKey.trim()} onClick={() => void run()}>
+      <button className="btn-ghost" disabled={running || !allGeminiKeys(settings).length} onClick={() => void run()}>
         {running ? 'Test läuft …' : 'Transkription testen'}
       </button>
+
       {lines.length > 0 && (
         <ul className="checks">
           {lines.map((l, i) => (
@@ -107,6 +109,8 @@ function StorageCard() {
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [copyInvite, setCopyInvite] = useState(false);
+
   const connect = useCallback(async (patch: Partial<Settings>) => {
     setBusy(true);
     setCheck(null);
@@ -130,12 +134,20 @@ function StorageCard() {
         setCheck({ label: 'Einladung', ok: false, message: 'Das ist kein Einladungs-Code der Mitschrift-App.' });
         return;
       }
-      void connect({ githubToken: invite.token, vaultRepo: invite.repo, vaultBranch: invite.branch });
+      const patch: Partial<Settings> = {
+        githubToken: invite.token,
+        vaultRepo: invite.repo,
+        vaultBranch: invite.branch,
+      };
+      if (invite.geminiKey) patch.geminiKey = invite.geminiKey;
+      if (invite.geminiFallbackKeys) patch.geminiFallbackKeys = invite.geminiFallbackKeys;
+      void connect(patch);
     },
     [connect],
   );
 
   const isCalvin = settings.userName === 'Calvin';
+  const otherPerson = settings.userName === 'Calvin' ? 'Yunus' : 'Calvin';
 
   return (
     <section className="card stack" aria-labelledby="storage-title">
@@ -156,7 +168,7 @@ function StorageCard() {
           </p>
           <div className="actions">
             <button className="btn-vault" onClick={() => setMode('invite')}>
-              Calvin einladen (QR-Code)
+              {otherPerson} einladen (QR-Code)
             </button>
             <button className="btn-ghost" disabled={busy} onClick={() => void connect({})}>
               Verbindung prüfen
@@ -167,16 +179,45 @@ function StorageCard() {
 
       {connected && mode === 'invite' && (
         <div className="stack invite">
-          <InviteQr text={encodeInvite({ repo: settings.vaultRepo, branch: settings.vaultBranch, token: settings.githubToken })} />
+          <InviteQr
+            text={encodeInvite({
+              repo: settings.vaultRepo,
+              branch: settings.vaultBranch,
+              token: settings.githubToken,
+              geminiKey: settings.geminiKey,
+              geminiFallbackKeys: settings.geminiFallbackKeys,
+            })}
+          />
           <small>
-            Calvin öffnet in seiner Mitschrift-App <b>Einstellungen → Gemeinsamer Speicher → Einladung scannen</b> und hält die Kamera
-            auf diesen Code. Den Code nicht fotografieren oder verschicken: Er enthält den Schlüssel zum Speicher.
+            {otherPerson} öffnet in seiner Mitschrift-App <b>Einstellungen → Gemeinsamer Speicher → Einladung scannen</b> und hält die Kamera
+            auf diesen Code. Speicher und API-Keys werden direkt übertragen!
           </small>
+          <div className="row" style={{ justifyContent: 'center' }}>
+            <button
+              className="btn-small btn-ghost"
+              onClick={() => {
+                const code = encodeInvite({
+                  repo: settings.vaultRepo,
+                  branch: settings.vaultBranch,
+                  token: settings.githubToken,
+                  geminiKey: settings.geminiKey,
+                  geminiFallbackKeys: settings.geminiFallbackKeys,
+                });
+                void navigator.clipboard.writeText(code);
+                setCopyInvite(true);
+                setTimeout(() => setCopyInvite(false), 2000);
+              }}
+            >
+              <Icon name={copyInvite ? 'check' : 'copy'} size={16} />
+              {copyInvite ? 'Code kopiert!' : 'Code für Chat kopieren'}
+            </button>
+          </div>
           <button className="btn-ghost" onClick={() => setMode('idle')}>
             Fertig
           </button>
         </div>
       )}
+
 
       {!connected && mode === 'idle' && (
         <div className="actions">
@@ -309,7 +350,8 @@ export function SettingsPage() {
     }
   };
 
-  const hasKey = settings.geminiKey.trim() !== '';
+  const keys = allGeminiKeys(settings);
+  const hasKey = keys.length > 0;
   const allOk = checks?.every((c) => c.ok);
 
   return (
@@ -335,22 +377,43 @@ export function SettingsPage() {
           <li>„Create API key“ antippen und den Key kopieren</li>
           <li>Hier einfügen und prüfen</li>
         </ol>
-        <input
-          id="setting-geminiKey"
-          type="password"
-          autoComplete="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          placeholder="Key hier einfügen"
-          value={settings.geminiKey}
-          onChange={(e) => set('geminiKey', e.target.value.trim())}
-          onBlur={kickRunner}
-        />
+        <label className="field">
+          <span>Haupt-Key</span>
+          <input
+            id="setting-geminiKey"
+            type="password"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            placeholder="Haupt-Key hier einfügen"
+            value={settings.geminiKey}
+            onChange={(e) => set('geminiKey', e.target.value.trim())}
+            onBlur={kickRunner}
+          />
+        </label>
+        <label className="field" style={{ marginTop: '0.5rem' }}>
+          <span>Ersatz-Keys / Fallback-Keys (optional)</span>
+          <textarea
+            id="setting-geminiFallbackKeys"
+            rows={2}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            placeholder="Weitere Gemini-Keys (durch Komma oder Zeilenumbruch getrennt)"
+            value={settings.geminiFallbackKeys}
+            onChange={(e) => set('geminiFallbackKeys', e.target.value)}
+            onBlur={kickRunner}
+          />
+          <small>
+            Springen automatisch ein, wenn das Kontingent des Haupt-Keys aufgebraucht ist.
+          </small>
+        </label>
         <button className="btn-vault btn-block" onClick={() => void test()} disabled={testing || !hasKey}>
-          {testing ? 'Prüfe …' : 'Key prüfen'}
+          {testing ? 'Prüfe …' : keys.length > 1 ? 'Alle Keys prüfen' : 'Key prüfen'}
         </button>
         {checks && <Checks checks={checks} onFix={(c) => c.fix && set(c.fix.key, c.fix.value)} />}
       </section>
+
 
       <section className="card stack" aria-labelledby="who-title">
         <div className="row">

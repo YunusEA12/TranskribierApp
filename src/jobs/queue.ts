@@ -17,7 +17,10 @@ export interface UploadedAudio {
   uploadedAt: number;
   /** Small recordings are not uploaded but sent inside the transcription request. */
   inline?: boolean;
+  /** The Gemini key that uploaded the file (needed for deleting and multi-key fallback). */
+  key?: string;
 }
+
 
 export interface Job {
   id: string; // also the key of the audio in IndexedDB

@@ -156,6 +156,9 @@ export class Recorder {
   private startLevelMeter(stream: MediaStream) {
     try {
       this.audioContext = new AudioContext();
+      if (this.audioContext.state === 'suspended') {
+        void this.audioContext.resume();
+      }
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 1024;
       this.samples = new Uint8Array(this.analyser.fftSize);
@@ -221,8 +224,9 @@ export const recorder = new Recorder();
 
 /** Assembles the chunks of a session into one audio job and deletes the chunks, atomically. */
 async function finalizeSession(sessionId: string, opts: { durationSec?: number; speakerCount?: number } = {}): Promise<string> {
-  const chunks = await db.chunks.where('[sessionId+seq]').between([sessionId, 0], [sessionId, Infinity]).toArray();
+  const chunks = await db.chunks.where('sessionId').equals(sessionId).sortBy('seq');
   const first = chunks[0];
+
   if (!first) throw new Error('Die Aufnahme ist leer.');
   const mimeType = first.mimeType;
   return enqueueAudio(

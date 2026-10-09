@@ -9,12 +9,13 @@ export type Route =
   | { page: 'transcript'; id: string };
 
 export function parseHash(hash: string): Route {
-  const h = hash.replace(/^#\/?/, '');
+  const h = hash.replace(/^#\/?/, '').replace(/\/+$/, '');
   if (h === 'history') return { page: 'history' };
   if (h === 'settings') return { page: 'settings' };
   if (h.startsWith('t/')) return { page: 'transcript', id: decodeURIComponent(h.slice(2)) };
   return { page: 'record' };
 }
+
 
 export const hrefFor = {
   record: '#/',

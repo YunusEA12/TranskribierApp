@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env*
+*_invite_qr.png
+calvin_invite_qr.png

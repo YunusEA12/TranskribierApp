@@ -11,6 +11,19 @@ describe('invite', () => {
     expect(decodeInvite(`  ${code}\n`)).toEqual(invite);
   });
 
+  it('round-trips with gemini keys', () => {
+    const invite = {
+      repo: 'Calvin746/mitschrift-daten',
+      branch: 'main',
+      token: 'test_token',
+      geminiKey: 'key1',
+      geminiFallbackKeys: 'key2, key3',
+    };
+    const code = encodeInvite(invite);
+    expect(decodeInvite(code)).toEqual(invite);
+  });
+
+
   it('rejects anything else', () => {
     expect(decodeInvite('https://example.com')).toBeNull();
     expect(decodeInvite('MITSCHRIFT1:kaputt')).toBeNull();

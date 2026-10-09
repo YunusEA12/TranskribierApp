@@ -9,6 +9,7 @@ export type EngineId = 'flash' | 'transcribe';
 export interface Settings {
   userName: string;
   geminiKey: string;
+  geminiFallbackKeys: string; // one or more fallback Gemini API keys (comma- or line-separated)
   // Shared storage: a private GitHub repo both phones write to. Yunus creates the token; Calvin gets
   // repo and token by scanning an invite QR code in Yunus' app.
   githubToken: string;
@@ -25,10 +26,11 @@ export interface Settings {
 // The only place model ids appear in code (CLAUDE.md rule 5).
 export const DEFAULT_SETTINGS: Settings = {
   userName: '',
-  geminiKey: '',
-  githubToken: '',
+  geminiKey: (import.meta.env?.VITE_GEMINI_API_KEY as string | undefined) ?? '',
+  geminiFallbackKeys: (import.meta.env?.VITE_GEMINI_FALLBACK_KEYS as string | undefined) ?? '',
+  githubToken: (import.meta.env?.VITE_GITHUB_TOKEN as string | undefined) ?? '',
   storageVerified: false,
-  vaultRepo: 'YunusEA12/mitschrift-daten',
+  vaultRepo: (import.meta.env?.VITE_VAULT_REPO as string | undefined) || 'Calvin746/mitschrift-daten',
   vaultBranch: 'main',
   engine: 'flash',
   flashModel: 'gemini-3.8-flash',
@@ -40,6 +42,18 @@ export const DEFAULT_SETTINGS: Settings = {
 const STORAGE_KEY = 'mitschrift.settings';
 const listeners = new Set<() => void>();
 let cached: Settings | null = null;
+
+export function parseKeyList(raw: string): string[] {
+  return raw
+    .split(/[\n,;]+/)
+    .map((k) => k.trim())
+    .filter(Boolean);
+}
+
+export function allGeminiKeys(s: Settings): string[] {
+  const list = [s.geminiKey.trim(), ...parseKeyList(s.geminiFallbackKeys)];
+  return [...new Set(list.filter(Boolean))];
+}
 
 export function getSettings(): Settings {
   if (cached) return cached;
@@ -56,6 +70,20 @@ export function getSettings(): Settings {
     // Corrupt or unavailable storage: fall back to defaults.
   }
   cached = { ...DEFAULT_SETTINGS, ...stored };
+  // If stored has no key yet, adopt env keys if available
+  if (!cached.geminiKey.trim() && import.meta.env?.VITE_GEMINI_API_KEY) {
+    cached.geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  }
+  if (!cached.geminiFallbackKeys.trim() && import.meta.env?.VITE_GEMINI_FALLBACK_KEYS) {
+    cached.geminiFallbackKeys = import.meta.env.VITE_GEMINI_FALLBACK_KEYS;
+  }
+  if (!cached.githubToken.trim() && import.meta.env?.VITE_GITHUB_TOKEN) {
+    cached.githubToken = import.meta.env.VITE_GITHUB_TOKEN;
+  }
+  if ((!cached.vaultRepo.trim() || cached.vaultRepo === 'YunusEA12/mitschrift-daten') && import.meta.env?.VITE_VAULT_REPO) {
+    cached.vaultRepo = import.meta.env.VITE_VAULT_REPO;
+  }
+
   // Existing installations keep working; new connections must pass the access check.
   cached.storageVerified = stored.storageVerified ?? Boolean(stored.githubToken);
   if (!cached.vaultRepo.trim()) cached.vaultRepo = DEFAULT_SETTINGS.vaultRepo;
@@ -98,8 +126,9 @@ export function storageConnected(s: Settings): boolean {
 /** What is still missing before recordings are processed: key, who records (decides the folder), and the shared storage. */
 export function missingSettings(s: Settings): string[] {
   const missing: string[] = [];
-  if (!s.geminiKey.trim()) missing.push(MISSING_KEY);
+  if (!allGeminiKeys(s).length) missing.push(MISSING_KEY);
   if (!userFolder(s.userName)) missing.push(MISSING_NAME);
   if (!storageConnected(s)) missing.push(MISSING_STORAGE);
   return missing;
 }
+
